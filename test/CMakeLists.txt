@@ -66,6 +66,7 @@ set(testsuite_SOURCES
     group/link/test.cpp
     group/translate_asy/test.cpp
     group/translate_nd/test.cpp
+    group/chamfer/test.cpp
 )
 
 add_executable(solvespace-testsuite

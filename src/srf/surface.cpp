@@ -271,7 +271,8 @@ void SSurface::MakeEdgesInto(SShell *shell, SEdgeList *sel, MakeAs flags,
 {
     STrimBy *stb;
     for(stb = trim.First(); stb; stb = trim.NextAfter(stb)) {
-        SCurve *sc = shell->curve.FindById(stb->curve);
+        SCurve *sc = shell->curve.FindByIdNoOops(stb->curve);
+        if(!sc) continue;  // skip orphaned trim entry
 
         // We have the option to use the curves from another shell; this
         // is relevant when generating the coincident edges while doing the
@@ -313,7 +314,8 @@ void SSurface::MakeSectionEdgesInto(SShell *shell, SEdgeList *sel, SBezierList *
 {
     STrimBy *stb;
     for(stb = trim.First(); stb; stb = trim.NextAfter(stb)) {
-        SCurve *sc = shell->curve.FindById(stb->curve);
+        SCurve *sc = shell->curve.FindByIdNoOops(stb->curve);
+        if(!sc) continue;  // skip orphaned trim entry
         SBezier *sb = &(sc->exact);
 
         if(sbl && sc->isExact && (sb->deg != 1 || !sel)) {

@@ -324,6 +324,38 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             break;
         }
 
+        case Command::GROUP_CHAMFER:
+            if(gs.faces == 2 && gs.n == 2) {
+                g.predef.entityB = gs.face[0];
+                g.predef.entityC = gs.face[1];
+            } else {
+                Error(_("Bad selection for new chamfer group. This group requires "
+                        "exactly two adjacent faces to be selected."));
+                return;
+            }
+            g.type        = Type::CHAMFER;
+            g.opA         = SS.GW.activeGroup;
+            g.valA        = 1.0;
+            g.meshCombine = CombineAs::ASSEMBLE;
+            g.name        = C_("group-name", "chamfer");
+            break;
+
+        case Command::GROUP_FILLET:
+            if(gs.faces == 2 && gs.n == 2) {
+                g.predef.entityB = gs.face[0];
+                g.predef.entityC = gs.face[1];
+            } else {
+                Error(_("Bad selection for new fillet group. This group requires "
+                        "exactly two adjacent faces to be selected."));
+                return;
+            }
+            g.type        = Type::FILLET;
+            g.opA         = SS.GW.activeGroup;
+            g.valA        = 1.0;
+            g.meshCombine = CombineAs::ASSEMBLE;
+            g.name        = C_("group-name", "fillet");
+            break;
+
         default: ssassert(false, "Unexpected menu ID");
     }
 
@@ -764,6 +796,12 @@ void Group::Generate(EntityList *entity, ParamList *param)
             }
             return;
         }
+        case Type::CHAMFER:
+        case Type::FILLET:
+            // One free parameter: the chamfer distance or fillet radius.
+            // No entities are generated; geometry is produced in GenerateShellAndMesh.
+            AddParam(param, h.param(0), valA);
+            return;
         case Type::LINKED:
             // The translation vector
             AddParam(param, h.param(0), gp.x);

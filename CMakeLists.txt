@@ -76,6 +76,10 @@ option(FORCE_VENDORED_Eigen3
     "Whether we should use our bundled Eigen even in the presence of a system copy"
     OFF)
 
+option(FORCE_VENDORED_LIBS
+    "Whether to use bundled (vendored) copies of PNG, Freetype, Cairo, etc. (useful when system -dev packages are not installed)"
+    OFF)
+
 set(OPENGL 3 CACHE STRING "OpenGL version to use (one of: 1 3)")
 
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
@@ -252,7 +256,7 @@ endif()
 
 
 if(ENABLE_GUI OR ENABLE_CLI)
-    if(WIN32 OR APPLE OR EMSCRIPTEN)
+    if(WIN32 OR APPLE OR EMSCRIPTEN OR FORCE_VENDORED_LIBS)
         # On Win32 and macOS we use vendored packages, since there is little to no benefit
         # to trying to find system versions. In particular, trying to link to libraries from
         # Homebrew or macOS system libraries into the .app file is highly likely to result

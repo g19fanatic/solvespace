@@ -23,7 +23,8 @@ bool GraphicsWindow::Selection::IsEmpty() {
 
 bool GraphicsWindow::Selection::HasEndpoints() {
     if(!entity.v) return false;
-    Entity *e = SK.GetEntity(entity);
+    Entity *e = SK.entity.FindByIdNoOops(entity);
+    if(!e) return false;
     return e->HasEndpoints();
 }
 
@@ -37,7 +38,8 @@ void GraphicsWindow::Selection::Draw(bool isHovered, Canvas *canvas) {
 
     std::vector<Vector> refs;
     if(entity.v) {
-        Entity *e = SK.GetEntity(entity);
+        Entity *e = SK.entity.FindByIdNoOops(entity);
+        if(!e) { entity.v = 0; return; }
         e->Draw(isHovered ? Entity::DrawAs::HOVERED :
                             Entity::DrawAs::SELECTED,
                 canvas);
@@ -46,7 +48,8 @@ void GraphicsWindow::Selection::Draw(bool isHovered, Canvas *canvas) {
         }
     }
     if(constraint.v) {
-        Constraint *c = SK.GetConstraint(constraint);
+        Constraint *c = SK.constraint.FindByIdNoOops(constraint);
+        if(!c) { constraint.v = 0; return; }
         c->Draw(isHovered ? Constraint::DrawAs::HOVERED :
                             Constraint::DrawAs::SELECTED,
                 canvas);

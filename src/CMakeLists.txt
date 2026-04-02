@@ -165,7 +165,8 @@ if(ENABLE_GUI OR ENABLE_CLI)
         srf/shell.cpp
         srf/surface.cpp
         srf/surfinter.cpp
-        srf/triangulate.cpp)
+        srf/triangulate.cpp
+        srf/chamfer.cpp)
 
     target_include_directories(solvespace-core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}

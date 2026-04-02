@@ -347,6 +347,28 @@ void TextWindow::ScreenChangeHelixPitch(int link, uint32_t v) {
     SS.TW.edit.meaning = Edit::HELIX_PITCH;
     SS.TW.edit.group.v = v;
 }
+void TextWindow::ScreenChangeChamferOffset(int link, uint32_t v) {
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+    Param *p = SK.param.FindByIdNoOops(g->h.param(0));
+    if(p) {
+        double offset = p->val / SS.MmPerUnit();
+        SS.TW.ShowEditControl(3, ssprintf("%.8f", offset));
+        SS.TW.edit.meaning = Edit::CHAMFER_OFFSET;
+        SS.TW.edit.group.v = v;
+    } else {
+    }
+}
+void TextWindow::ScreenChangeFilletRadius(int link, uint32_t v) {
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+    Param *p = SK.param.FindByIdNoOops(g->h.param(0));
+    if(p) {
+        double radius = p->val / SS.MmPerUnit();
+        SS.TW.ShowEditControl(3, ssprintf("%.8f", radius));
+        SS.TW.edit.meaning = Edit::FILLET_RADIUS;
+        SS.TW.edit.group.v = v;
+    } else {
+    }
+}
 void TextWindow::ScreenChangePitchOption(int link, uint32_t v) {
     Group *g = SK.GetGroup(SS.TW.shown.group);
     if(g->valB == 0.0) {
@@ -466,6 +488,30 @@ void TextWindow::ShowGroupInfo() {
         Printf(false, "%Bd   %Ftscaled by%E %# %Fl%Ll%f%D[change]%E",
             g->scale,
             &TextWindow::ScreenChangeGroupScale, g->h.v);
+    } else if(g->type == Group::Type::CHAMFER) {
+        Printf(true, " %Ftchamfer edge of solid%E");
+        Group *src = SK.GetGroup(g->opA);
+        Printf(false, "%Ba   %Ftsource%E  %s", src->DescriptionString().c_str());
+        Param *p = SK.param.FindByIdNoOops(g->h.param(0));
+        if(p) {
+            Printf(false, "%Bd   %Ftoffset distance%E  %# %Fl%Ll%f%D[change]%E",
+                p->val / SS.MmPerUnit(),
+                &TextWindow::ScreenChangeChamferOffset, g->h.v);
+        } else {
+            Printf(false, "%Bd   %Ftoffset distance%E  (pending)");
+        }
+    } else if(g->type == Group::Type::FILLET) {
+        Printf(true, " %Ftfillet edge of solid%E");
+        Group *src = SK.GetGroup(g->opA);
+        Printf(false, "%Ba   %Ftsource%E  %s", src->DescriptionString().c_str());
+        Param *p = SK.param.FindByIdNoOops(g->h.param(0));
+        if(p) {
+            Printf(false, "%Bd   %Ftfillet radius%E  %# %Fl%Ll%f%D[change]%E",
+                p->val / SS.MmPerUnit(),
+                &TextWindow::ScreenChangeFilletRadius, g->h.v);
+        } else {
+            Printf(false, "%Bd   %Ftfillet radius%E  (pending)");
+        }
     } else if(g->type == Group::Type::DRAWING_3D) {
         Printf(true, " %Ftsketch in 3d%E");
     } else if(g->type == Group::Type::DRAWING_WORKPLANE) {
@@ -497,7 +543,8 @@ void TextWindow::ShowGroupInfo() {
 
     if(g->type == Group::Type::EXTRUDE || g->type == Group::Type::LATHE ||
        g->type == Group::Type::REVOLVE || g->type == Group::Type::LINKED ||
-       g->type == Group::Type::HELIX) {
+       g->type == Group::Type::HELIX || g->type == Group::Type::CHAMFER ||
+       g->type == Group::Type::FILLET) {
         bool un   = (g->meshCombine == Group::CombineAs::UNION);
         bool diff = (g->meshCombine == Group::CombineAs::DIFFERENCE);
         bool intr = (g->meshCombine == Group::CombineAs::INTERSECTION);
@@ -522,7 +569,8 @@ void TextWindow::ShowGroupInfo() {
             intr ? RADIO_TRUE : RADIO_FALSE);
 
         if(g->type == Group::Type::EXTRUDE || g->type == Group::Type::LATHE ||
-           g->type == Group::Type::REVOLVE || g->type == Group::Type::HELIX) {
+           g->type == Group::Type::REVOLVE || g->type == Group::Type::HELIX ||
+           g->type == Group::Type::CHAMFER || g->type == Group::Type::FILLET) {
             Printf(false,
                 "%Bd   %Ftcolor   %E%Bz  %Bd (%@, %@, %@) %f%D%Lf%Fl[change]%E",
                 &g->color,
@@ -535,7 +583,8 @@ void TextWindow::ShowGroupInfo() {
 
         if(g->type == Group::Type::EXTRUDE || g->type == Group::Type::LATHE ||
            g->type == Group::Type::REVOLVE || g->type == Group::Type::LINKED ||
-           g->type == Group::Type::HELIX) {
+           g->type == Group::Type::HELIX || g->type == Group::Type::CHAMFER ||
+           g->type == Group::Type::FILLET) {
             Printf(false, "   %Fd%f%LP%s  suppress this group's solid model",
                 &TextWindow::ScreenChangeGroupOption,
                 g->suppress ? CHECK_TRUE : CHECK_FALSE);
@@ -896,6 +945,38 @@ void TextWindow::EditControlDone(std::string s) {
                 Group *g = SK.GetGroup(edit.group);
                 g->valB = ev * SS.MmPerUnit();
                 SS.MarkGroupDirty(g->h);
+            }
+            break;
+
+        case Edit::CHAMFER_OFFSET:  // stored in h.param(0)
+            if(Expr *e = Expr::From(s, /*popUpError=*/true)) {
+                double ev = e->Eval();
+                if(ev <= 0) {
+                    Error(_("Chamfer offset must be positive."));
+                    break;
+                }
+                Group *g = SK.GetGroup(edit.group);
+                Param *p = SK.param.FindByIdNoOops(g->h.param(0));
+                if(p) {
+                    p->val = ev * SS.MmPerUnit();
+                    SS.MarkGroupDirty(g->h);
+                }
+            }
+            break;
+
+        case Edit::FILLET_RADIUS:  // stored in h.param(0)
+            if(Expr *e = Expr::From(s, /*popUpError=*/true)) {
+                double ev = e->Eval();
+                if(ev <= 0) {
+                    Error(_("Fillet radius must be positive."));
+                    break;
+                }
+                Group *g = SK.GetGroup(edit.group);
+                Param *p = SK.param.FindByIdNoOops(g->h.param(0));
+                if(p) {
+                    p->val = ev * SS.MmPerUnit();
+                    SS.MarkGroupDirty(g->h);
+                }
             }
             break;
 

@@ -1011,6 +1011,14 @@ msgstr "&Helix"
 msgid "&Lathe"
 msgstr "R&otieren"
 
+#: graphicswin.cpp:122
+msgid "&Chamfer"
+msgstr ""
+
+#: graphicswin.cpp:123
+msgid "&Fillet"
+msgstr ""
+
 #: graphicswin.cpp:119
 msgid "Re&volve"
 msgstr "D&rehen"
@@ -1473,6 +1481,22 @@ msgstr ""
 "Achse parallel zu Linie / Normale, durch Punkt)\n"
 "    * einem Liniensegment (gedreht um Liniensegment)\n"
 
+
+#: group.cpp:332
+msgid "Bad selection for new chamfer group. This group requires exactly two adjacent faces to be selected."
+msgstr ""
+
+#: group.cpp:348
+msgid "Bad selection for new fillet group. This group requires exactly two adjacent faces to be selected."
+msgstr ""
+
+#: textscreens.cpp:937
+msgid "Chamfer offset must be positive."
+msgstr ""
+
+#: textscreens.cpp:950
+msgid "Fillet radius must be positive."
+msgstr ""
 #: group.cpp:261
 msgctxt "group-name"
 msgid "helix"
@@ -1503,6 +1527,16 @@ msgstr "Drehen"
 msgctxt "group-name"
 msgid "translate"
 msgstr "Versetzen"
+
+#: group.cpp:340
+msgctxt "group-name"
+msgid "chamfer"
+msgstr ""
+
+#: group.cpp:356
+msgctxt "group-name"
+msgid "fillet"
+msgstr ""
 
 #: group.cpp:422
 msgid "(unnamed)"

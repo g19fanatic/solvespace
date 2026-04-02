@@ -157,6 +157,8 @@ enum class Command : uint32_t {
     GROUP_ROT,
     GROUP_TRANS,
     GROUP_LINK,
+    GROUP_CHAMFER,
+    GROUP_FILLET,
     GROUP_RECENT,
     // Constrain
     DISTANCE_DIA,
@@ -370,7 +372,10 @@ public:
         // For tangent arc
         TANGENT_ARC_RADIUS    = 800,
         // For helix pitch
-        HELIX_PITCH           = 802
+        HELIX_PITCH           = 802,
+        // For chamfer offset and fillet radius
+        CHAMFER_OFFSET        = 803,
+        FILLET_RADIUS         = 804
     };
     struct {
         bool        showAgain;
@@ -507,6 +512,8 @@ public:
     static void ScreenChangeGroupScale(int link, uint32_t v);
     static void ScreenChangeHelixPitch(int link, uint32_t v);
     static void ScreenChangePitchOption(int link, uint32_t v);
+    static void ScreenChangeChamferOffset(int link, uint32_t v);
+    static void ScreenChangeFilletRadius(int link, uint32_t v);
     static void ScreenChangeLightDirection(int link, uint32_t v);
     static void ScreenChangeLightIntensity(int link, uint32_t v);
     static void ScreenChangeLightAmbient(int link, uint32_t v);

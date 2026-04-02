@@ -739,8 +739,10 @@ void SShell::CleanupAfterBoolean() {
 //-----------------------------------------------------------------------------
 void SShell::RewriteSurfaceHandlesForCurves(SShell *a, SShell *b) {
     for(SCurve &sc : curve) {
-        sc.surfA = sc.GetSurfaceA(a, b)->newH,
-        sc.surfB = sc.GetSurfaceB(a, b)->newH;
+        if(sc.surfA.v != 0)
+            sc.surfA = sc.GetSurfaceA(a, b)->newH;
+        if(sc.surfB.v != 0)
+            sc.surfB = sc.GetSurfaceB(a, b)->newH;
     }
 }
 
@@ -785,7 +787,12 @@ void SShell::MakeFromAssemblyOf(SShell *a, SShell *b) {
             // to the curves since we recorded them in the previous step.
             STrimBy *stb;
             for(stb = sn.trim.First(); stb; stb = sn.trim.NextAfter(stb)) {
-                stb->curve = ab->curve.FindById(stb->curve)->newH;
+                SCurve *foundCurve = ab->curve.FindByIdNoOops(stb->curve);
+                if(!foundCurve) {
+                    booleanFailed = true;
+                    return;
+                }
+                stb->curve = foundCurve->newH;
             }
             s.newH = surface.AddAndAssignId(&sn);
         }

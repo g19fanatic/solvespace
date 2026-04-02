@@ -186,7 +186,9 @@ public:
         HELIX                         = 5103,
         ROTATE                        = 5200,
         TRANSLATE                     = 5201,
-        LINKED                        = 5300
+        LINKED                        = 5300,
+        CHAMFER                       = 5400,
+        FILLET                        = 5401
     };
     Group::Type type;
 
@@ -313,6 +315,8 @@ public:
         REMAP_PT_TO_ARC    = 1008,
         REMAP_PT_TO_NORMAL = 1009,
         REMAP_LATHE_ARC_CENTER = 1010,
+        REMAP_CHAMFER_FACE = 1011,
+        REMAP_FILLET_FACE  = 1012,
     };
     hEntity Remap(hEntity in, int copyNumber);
     void MakeExtrusionLines(EntityList *el, hEntity in);

@@ -389,6 +389,49 @@ void Group::GenerateShellAndMesh() {
 
         thisShell.MakeFromTransformationOf(&impShell, offset, q, scale);
         thisShell.RemapFaces(this, 0);
+    } else if(type == Type::CHAMFER) {
+        Group *src = SK.GetGroup(opA);
+        Param *p = SK.param.FindByIdNoOops(h.param(0));
+        if(p) {
+            double dist = p->val;
+            thisShell.MakeFromChamferOf(&src->runningShell, this, dist);
+            booleanFailed = thisShell.booleanFailed;
+        } else {
+            booleanFailed = true;
+        }
+    } else if(type == Type::FILLET) {
+        Group *src = SK.GetGroup(opA);
+        Param *p = SK.param.FindByIdNoOops(h.param(0));
+        if(p) {
+            double radius = p->val;
+            thisShell.MakeFromFilletOf(&src->runningShell, this, radius);
+            booleanFailed = thisShell.booleanFailed;
+        } else {
+            booleanFailed = true;
+        }
+    }
+
+    // For CHAMFER and FILLET, thisShell is already a complete modified copy of
+    // the source shell (MakeFromChamferOf/MakeFromFilletOf starts with a full
+    // copy of src->runningShell). Skip the GenerateForBoolean/ASSEMBLE step,
+    // which would concatenate the source shell again and duplicate all geometry,
+    // causing chained chamfers/fillets on the same face to fail.
+    if(type == Type::CHAMFER || type == Type::FILLET) {
+        if(!IsForcedToMesh()) {
+            runningShell.MakeFromCopyOf(&thisShell);
+        } else {
+            SMesh thism = {};
+            thism.MakeFromCopyOf(&thisMesh);
+            thisShell.TriangulateInto(&thism);
+            thism.RemoveDegenerateTriangles();
+            runningMesh.MakeFromCopyOf(&thism);
+            thism.Clear();
+        }
+        if(booleanFailed != prevBooleanFailed) {
+            SS.ScheduleShowTW();
+        }
+        displayDirty = true;
+        return;
     }
 
     if(srcg->meshCombine != CombineAs::ASSEMBLE) {
@@ -537,6 +580,8 @@ Group *Group::PreviousGroup() const {
 Group *Group::RunningMeshGroup() const {
     if(type == Type::TRANSLATE || type == Type::ROTATE) {
         return SK.GetGroup(opA)->RunningMeshGroup();
+    } else if(type == Type::CHAMFER || type == Type::FILLET) {
+        return SK.GetGroup(opA)->RunningMeshGroup();
     } else {
         return PreviousGroup();
     }
@@ -548,6 +593,8 @@ bool Group::IsMeshGroup() {
         case Group::Type::LATHE:
         case Group::Type::REVOLVE:
         case Group::Type::HELIX:
+        case Group::Type::CHAMFER:
+        case Group::Type::FILLET:
         case Group::Type::ROTATE:
         case Group::Type::TRANSLATE:
             return true;

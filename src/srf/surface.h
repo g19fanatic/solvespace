@@ -199,6 +199,7 @@ public:
 class SCurve {
 public:
     hSCurve         h;
+    int             tag;
 
     // In a Boolean, C = A op B. The curves in A and B get copied into C, and
     // therefore must get new hSCurves assigned. For the curves in A and B,
@@ -431,6 +432,8 @@ public:
                       Vector edge_n_out, Vector surf_n);
 
     void MakeFromCopyOf(SShell *a);
+    void MakeFromChamferOf(SShell *src, Group *g, double dist);
+    void MakeFromFilletOf(SShell *src, Group *g, double r);
     void MakeFromTransformationOf(SShell *a,
                                   Vector trans, Quaternion q, double scale);
     void MakeFromAssemblyOf(SShell *a, SShell *b);

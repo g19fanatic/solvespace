@@ -975,6 +975,14 @@ msgstr "周回 (&H)"
 msgid "&Lathe"
 msgstr "螺旋 (&L)"
 
+#: graphicswin.cpp:122
+msgid "&Chamfer"
+msgstr ""
+
+#: graphicswin.cpp:123
+msgid "&Fillet"
+msgstr ""
+
 #: graphicswin.cpp:119
 msgid "Re&volve"
 msgstr "回転 (&v)"
@@ -1427,6 +1435,22 @@ msgstr ""
 "作成します)\n"
 "　* 線分 (直線を回転軸とします)\n"
 
+
+#: group.cpp:332
+msgid "Bad selection for new chamfer group. This group requires exactly two adjacent faces to be selected."
+msgstr ""
+
+#: group.cpp:348
+msgid "Bad selection for new fillet group. This group requires exactly two adjacent faces to be selected."
+msgstr ""
+
+#: textscreens.cpp:937
+msgid "Chamfer offset must be positive."
+msgstr ""
+
+#: textscreens.cpp:950
+msgid "Fillet radius must be positive."
+msgstr ""
 #: group.cpp:261
 msgctxt "group-name"
 msgid "helix"
@@ -1455,6 +1479,16 @@ msgstr ""
 #: group.cpp:298
 msgctxt "group-name"
 msgid "translate"
+msgstr ""
+
+#: group.cpp:340
+msgctxt "group-name"
+msgid "chamfer"
+msgstr ""
+
+#: group.cpp:356
+msgctxt "group-name"
+msgid "fillet"
 msgstr ""
 
 #: group.cpp:422
