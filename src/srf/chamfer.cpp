@@ -207,6 +207,22 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         if(d2.Dot(c2.Minus(V1)) < 0) d2 = d2.ScaledBy(-1);
     }
 
+    // Orientation normalization: ensure chamfer surface normal faces outward.
+    // The chamfer surface FromPlane(A, B-A, D-A) has normal = (B-A).Cross(D-A)
+    // = t.Cross(d2-d1)*dist^2. We want this to align with n1+n2 (outward bisector).
+    // If not, swap surf1/surf2 roles so geometry is consistently oriented regardless
+    // of which face was selected as entityB vs entityC.
+    {
+        Vector expectedNormal = t.Cross(d2.Minus(d1));
+        if(expectedNormal.Dot(n1.Plus(n2)) > 0) {
+            std::swap(hSurf1, hSurf2);
+            std::swap(d1, d2);
+            std::swap(n1, n2);
+            surf1 = surface.FindById(hSurf1);
+            surf2 = surface.FindById(hSurf2);
+        }
+    }
+
     // Step 8: compute chamfer corners
     // A, B: setback points on surf1 (at V1 and V2 ends)
     // D, C: setback points on surf2 (at V1 and V2 ends)
@@ -661,6 +677,22 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
 
     }
 
+
+    // Orientation normalization: ensure fillet surface is consistently oriented
+    // regardless of which face was selected as entityB vs entityC.
+    // The fillet arc goes from A0 (on surf1) through the edge to B0 (on surf2).
+    // We want t.Cross(d2-d1) to align with n1+n2 (outward bisector).
+    // If not, swap surf1/surf2 roles.
+    {
+        Vector expectedNormal = t.Cross(d2.Minus(d1));
+        if(expectedNormal.Dot(n1.Plus(n2)) > 0) {
+            std::swap(hSurf1, hSurf2);
+            std::swap(d1, d2);
+            std::swap(n1, n2);
+            surf1 = surface.FindById(hSurf1);
+            surf2 = surface.FindById(hSurf2);
+        }
+    }
 
     // Step 8: compute tangent contact points (setback along each face)
     // A0, A1: tangent contact points on surf1 at V1 and V2 ends

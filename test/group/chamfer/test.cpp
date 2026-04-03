@@ -460,3 +460,153 @@ TEST_CASE(chamfer_chaining_no_boolean_fail) {
         CHECK_TRUE(c2g->runningShell.surface.n > 6);
     }
 }
+
+//-----------------------------------------------------------------------------
+// Task 9: Face-order-invariant chamfer test — order 1 (face1, face2)
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_face_order_forward) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+
+    hGroup chamferH1 = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    Group *g1 = SK.GetGroup(chamferH1);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    int surfCount1 = g1->runningShell.surface.n;
+    CHECK_TRUE(surfCount1 > 6);
+
+    // Verify no back-facing triangles: all triangle normals should point
+    // away from the box center (10,10,10). A flipped chamfer/fillet face
+    // produces red back-facing triangles in the UI.
+    g1->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 10);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g1->displayMesh.l.n; ti++) {
+        STriangle *tr = &g1->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Task 9b: Face-order-invariant chamfer test — order 2 (face2, face1)
+// This was the buggy order before the orientation normalization fix.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_face_order_invariant) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+
+    // Reversed order: face2 first, face1 second (previously buggy)
+    hGroup chamferH = AddChamferGroup(extrudeH, face2, face1, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    int surfCount = g->runningShell.surface.n;
+    CHECK_TRUE(surfCount > 6);
+
+    // Verify no back-facing triangles: all triangle normals should point
+    // away from the box center (10,10,10). A flipped chamfer/fillet face
+    // produces red back-facing triangles in the UI.
+    g->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 10);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Task 10: Face-order-invariant fillet test — order 1 (face1, face2)
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_face_order_forward) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+
+    hGroup filletH1 = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    Group *g1 = SK.GetGroup(filletH1);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    g1->GenerateDisplayItems();
+    int surfCount1 = g1->runningShell.surface.n;
+    CHECK_TRUE(surfCount1 > 6);
+
+    // Verify no back-facing triangles: all triangle normals should point
+    // away from the box center (10,10,10). A flipped chamfer/fillet face
+    // produces red back-facing triangles in the UI.
+    g1->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 10);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g1->displayMesh.l.n; ti++) {
+        STriangle *tr = &g1->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Task 10b: Face-order-invariant fillet test — order 2 (face2, face1)
+// This was the buggy order before the orientation normalization fix.
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_face_order_invariant) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+
+    // Reversed order: face2 first, face1 second (previously buggy)
+    hGroup filletH = AddFilletGroup(extrudeH, face2, face1, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    g->GenerateDisplayItems();
+    int surfCount = g->runningShell.surface.n;
+    CHECK_TRUE(surfCount > 6);
+
+    // Verify no back-facing triangles: all triangle normals should point
+    // away from the box center (10,10,10). A flipped chamfer/fillet face
+    // produces red back-facing triangles in the UI.
+    g->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 10);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
