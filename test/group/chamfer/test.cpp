@@ -121,6 +121,25 @@ static bool FindTwoAdjacentFaces(hGroup extrudeGroupH,
 }
 
 //-----------------------------------------------------------------------------
+// Helper: Find a FACE_NORMAL_PT entity (cap face) from the extrude group.
+// wantTop=true  -> returns the face with the highest Z coordinate
+// wantTop=false -> returns the face with the lowest Z coordinate
+//-----------------------------------------------------------------------------
+static hEntity FindCapFace(hGroup extrudeGroupH, bool wantTop) {
+    hEntity best = {};
+    double bestZ = wantTop ? -1e30 : 1e30;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeGroupH) continue;
+        if(e.type != Entity::Type::FACE_NORMAL_PT) continue;
+        Vector pt = e.FaceGetPointNum();
+        if(wantTop && pt.z > bestZ) { bestZ = pt.z; best = e.h; }
+        if(!wantTop && pt.z < bestZ) { bestZ = pt.z; best = e.h; }
+    }
+    return best;
+}
+
+//-----------------------------------------------------------------------------
 // Helper: Add a CHAMFER group on top of the extrude group.
 // Returns the chamfer group handle.
 //-----------------------------------------------------------------------------
@@ -138,7 +157,7 @@ static hGroup AddChamferGroup(hGroup extrudeGroupH,
     g.visible = true;
     g.color = RGBi(100, 100, 100);
     g.scale = 1;
-    g.order = 3;
+    g.order = SK.group.n + 1;
     SK.group.AddAndAssignId(&g);
     SK.groupOrder.Add(&g.h);
     SS.GW.activeGroup = g.h;
@@ -164,7 +183,7 @@ static hGroup AddFilletGroup(hGroup extrudeGroupH,
     g.visible = true;
     g.color = RGBi(100, 100, 100);
     g.scale = 1;
-    g.order = 3;
+    g.order = SK.group.n + 1;
     SK.group.AddAndAssignId(&g);
     SK.groupOrder.Add(&g.h);
     SS.GW.activeGroup = g.h;
@@ -442,7 +461,7 @@ TEST_CASE(chamfer_chaining_no_boolean_fail) {
     g2.visible = true;
     g2.color = RGBi(100, 100, 100);
     g2.scale = 1;
-    g2.order = 4;
+    g2.order = SK.group.n + 1;
     SK.group.AddAndAssignId(&g2);
     SK.groupOrder.Add(&g2.h);
     SS.GW.activeGroup = g2.h;
@@ -1274,4 +1293,392 @@ TEST_CASE(fillet_original_vertices_hidden) {
     }
     CHECK_TRUE(foundV1);
     CHECK_TRUE(foundV2);
+}
+
+//-----------------------------------------------------------------------------
+// Task 16: Original extrude LINE_SEGMENT V1-V2 should be forceHidden after chamfer/fillet.
+//
+// After a chamfer/fillet removes the shared edge V1-V2, the LINE_SEGMENT entity
+// from the extrude group connecting V1=(20,0,0) to V2=(20,0,20) should have
+// forceHidden=true so it doesn't appear as a visible edge in the UI.
+//-----------------------------------------------------------------------------
+
+TEST_CASE(chamfer_original_edge_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    Vector V1 = Vector::From(20, 0, 0);
+    // Box height is 80: extrusion with valA=20 on the default workplane gives Z=80 at top.
+    Vector V2 = Vector::From(20, 0, 80);
+
+    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // After chamfer: the LINE_SEGMENT entity from the extrude group
+    // connecting V1 and V2 should be forceHidden.
+    bool foundEdge = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+        // Look up endpoint positions
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+        if((p0.Equals(V1) && p1.Equals(V2)) || (p0.Equals(V2) && p1.Equals(V1))) {
+            CHECK_TRUE(e.forceHidden);
+            foundEdge = true;
+        }
+    }
+    CHECK_TRUE(foundEdge);
+}
+
+//-----------------------------------------------------------------------------
+// Chained chamfer test: chamfer1 on bottom edge, chamfer2 on top edge.
+// After chamfer2, the EXTRUDE group's top-corner point entities (at V1=(0,0,80)
+// and V2=(20,0,80)) and the LINE_SEGMENT entities touching them should be
+// forceHidden=true.
+//
+// BUG: The current forceHidden loop checks `existEnt.group == opA`. For chamfer2,
+// opA = chamfer1 group (NOT extrude), so extrude group entities are NOT found.
+// This test SHOULD FAIL before the fix (Task 2) is applied.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_chained_second_hides_extrude_entities) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // Apply chamfer1 on (face1, bottom cap). opA = extrude group.
+    hEntity bottomCap = FindCapFace(extrudeH, false);  // wantTop=false
+    CHECK_TRUE(bottomCap.v != 0);
+    if(bottomCap.v == 0) return;
+    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    Group *g1 = SK.GetGroup(chamfer1H);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    // Apply chamfer2 on (face1, top cap). opA = chamfer1 group.
+    hEntity topCap = FindCapFace(extrudeH, true);   // wantTop=true
+    CHECK_TRUE(topCap.v != 0);
+    if(topCap.v == 0) return;
+    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    Group *g2 = SK.GetGroup(chamfer2H);
+    CHECK_TRUE(g2 != nullptr);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    // The top-cap shared edge endpoints are at the corner between face1 (Y=0)
+    // and top cap (Z=80). For the 20x20 box with front face Y=0:
+    // V1 and V2 are the two endpoints of the top-front edge.
+    // We check that ANY extrude-group point entity at Z=80 and Y=0 is forceHidden.
+    bool foundAnyTopCornerHidden = false;
+    bool anyTopCornerNotHidden = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(!e.IsPoint()) continue;
+        Vector p = e.PointGetNum();
+        // Top-front corner: Z near 80 AND Y near 0
+        if(fabs(p.z - 80.0) < LENGTH_EPS && fabs(p.y) < LENGTH_EPS) {
+            if(e.forceHidden) {
+                foundAnyTopCornerHidden = true;
+            } else {
+                anyTopCornerNotHidden = true;
+            }
+        }
+    }
+    // After chamfer2, ALL top-front corners from extrude group should be forceHidden.
+    CHECK_TRUE(foundAnyTopCornerHidden);    // we found hidden ones
+    CHECK_FALSE(anyTopCornerNotHidden);     // no unhidden top-front corners remain
+
+    // Also check LINE_SEGMENT entities from extrude group touching those corners are hidden.
+    bool anyTopEdgeNotHidden = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+        bool p0IsTopFront = (fabs(p0.z - 80.0) < LENGTH_EPS && fabs(p0.y) < LENGTH_EPS);
+        bool p1IsTopFront = (fabs(p1.z - 80.0) < LENGTH_EPS && fabs(p1.y) < LENGTH_EPS);
+        if(p0IsTopFront || p1IsTopFront) {
+            if(!e.forceHidden) anyTopEdgeNotHidden = true;
+        }
+    }
+    CHECK_FALSE(anyTopEdgeNotHidden);  // all extrude edges touching top-front corner should be hidden
+}
+
+TEST_CASE(fillet_chained_second_hides_extrude_entities) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    hEntity bottomCap = FindCapFace(extrudeH, false);
+    CHECK_TRUE(bottomCap.v != 0);
+    if(bottomCap.v == 0) return;
+    hGroup fillet1H = AddFilletGroup(extrudeH, face1, bottomCap, 2.0);
+    Group *g1 = SK.GetGroup(fillet1H);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    hEntity topCap = FindCapFace(extrudeH, true);
+    CHECK_TRUE(topCap.v != 0);
+    if(topCap.v == 0) return;
+    hGroup fillet2H = AddFilletGroup(fillet1H, face1, topCap, 2.0);
+    Group *g2 = SK.GetGroup(fillet2H);
+    CHECK_TRUE(g2 != nullptr);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    bool foundAnyTopCornerHidden = false;
+    bool anyTopCornerNotHidden = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(!e.IsPoint()) continue;
+        Vector p = e.PointGetNum();
+        if(fabs(p.z - 80.0) < LENGTH_EPS && fabs(p.y) < LENGTH_EPS) {
+            if(e.forceHidden) {
+                foundAnyTopCornerHidden = true;
+            } else {
+                anyTopCornerNotHidden = true;
+            }
+        }
+    }
+    CHECK_TRUE(foundAnyTopCornerHidden);
+    CHECK_FALSE(anyTopCornerNotHidden);
+
+    bool anyTopEdgeNotHidden = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+        bool p0IsTopFront = (fabs(p0.z - 80.0) < LENGTH_EPS && fabs(p0.y) < LENGTH_EPS);
+        bool p1IsTopFront = (fabs(p1.z - 80.0) < LENGTH_EPS && fabs(p1.y) < LENGTH_EPS);
+        if(p0IsTopFront || p1IsTopFront) {
+            if(!e.forceHidden) anyTopEdgeNotHidden = true;
+        }
+    }
+    CHECK_FALSE(anyTopEdgeNotHidden);
+}
+
+//-----------------------------------------------------------------------------
+// Side-face + top-cap chamfer test: chamfer(side FACE_XPROD, top FACE_NORMAL_PT)
+// must NOT produce back-facing triangles.
+//
+// The user reports that chamfer(extruded side face + bottom cap) works but
+// chamfer(extruded side face + top cap) is wrong (inverted geometry).
+// The orientation normalization condition at chamfer.cpp:249 fires incorrectly
+// for the top-cap horizontal edge, causing the chamfer face to be inverted.
+//
+// This test SHOULD FAIL before the fix (Task 2) is applied.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_side_top_cap_no_backface) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // face1 is a FACE_XPROD (side face: front Y=0).
+    // Find the top cap FACE_NORMAL_PT.
+    hEntity topCap = FindCapFace(extrudeH, true);
+    CHECK_TRUE(topCap.v != 0);  // Must find a FACE_NORMAL_PT at high Z
+    if(topCap.v == 0) return;
+
+    hGroup chamferH = AddChamferGroup(extrudeH, face1, topCap, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Check no back-facing triangles. Box center = (10,10,40) for 20x20x80 box.
+    g->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {  // slightly relaxed threshold
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Side-face + top-cap fillet test.
+// Same scenario as chamfer_side_top_cap_no_backface but for fillet.
+// This test SHOULD FAIL before the fix (Task 2) is applied.
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_side_top_cap_no_backface) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    hEntity topCap = FindCapFace(extrudeH, true);
+    CHECK_TRUE(topCap.v != 0);
+    if(topCap.v == 0) return;
+
+    hGroup filletH = AddFilletGroup(extrudeH, face1, topCap, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    g->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
+
+TEST_CASE(chamfer_cap_edges_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    Vector V1 = Vector::From(20, 0, 0);
+    Vector V2 = Vector::From(20, 0, 80);
+
+    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // After chamfer: ALL LINE_SEGMENT entities from the extrude group that
+    // have V1 or V2 as an endpoint should be forceHidden.
+    // This includes cap edges like (0,0,0)->(20,0,0) and (20,0,0)->(20,20,0).
+    int capEdgesFound = 0;
+    int capEdgesHidden = 0;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+        // Any edge touching V1 or V2 should be hidden
+        if(p0.Equals(V1) || p0.Equals(V2) || p1.Equals(V1) || p1.Equals(V2)) {
+            capEdgesFound++;
+            if(e.forceHidden) capEdgesHidden++;
+        }
+    }
+    // There should be 5 edges touching V1 or V2:
+    //   - 2 cap edges at V1 (from bottom face)
+    //   - 2 cap edges at V2 (from top face)
+    //   - 1 side edge V1->V2 (already fixed in previous session)
+    // All should be hidden.
+    CHECK_TRUE(capEdgesFound >= 4);   // at least the 4 cap edges
+    CHECK_TRUE(capEdgesHidden == capEdgesFound);  // all should be hidden
+}
+
+TEST_CASE(fillet_cap_edges_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    Vector V1 = Vector::From(20, 0, 0);
+    Vector V2 = Vector::From(20, 0, 80);
+
+    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    int capEdgesFound = 0;
+    int capEdgesHidden = 0;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+        if(p0.Equals(V1) || p0.Equals(V2) || p1.Equals(V1) || p1.Equals(V2)) {
+            capEdgesFound++;
+            if(e.forceHidden) capEdgesHidden++;
+        }
+    }
+    CHECK_TRUE(capEdgesFound >= 4);
+    CHECK_TRUE(capEdgesHidden == capEdgesFound);
+}
+
+TEST_CASE(fillet_original_edge_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    Vector V1 = Vector::From(20, 0, 0);
+    // Box height is 80: extrusion with valA=20 on the default workplane gives Z=80 at top.
+    Vector V2 = Vector::From(20, 0, 80);
+
+    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    bool foundEdge = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+        if((p0.Equals(V1) && p1.Equals(V2)) || (p0.Equals(V2) && p1.Equals(V1))) {
+            CHECK_TRUE(e.forceHidden);
+            foundEdge = true;
+        }
+    }
+    CHECK_TRUE(foundEdge);
 }

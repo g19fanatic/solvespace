@@ -944,9 +944,23 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                     // since those vertices no longer exist in the chamfered geometry.
                                     for(int ei = 0; ei < entity->n; ei++) {
                                         Entity &existEnt = entity->Get(ei);
-                                        if(existEnt.group == opA && existEnt.IsPoint()) {
+                                        if(existEnt.IsPoint()) {
                                             Vector ep_ch = existEnt.PointGetNum();
                                             if(ep_ch.Equals(V1) || ep_ch.Equals(V2)) {
+                                                existEnt.forceHidden = true;
+                                            }
+                                        }
+                                    }
+                                    // Also hide the LINE_SEGMENT entity connecting V1 to V2 from the opA group
+                                    for(int ei = 0; ei < entity->n; ei++) {
+                                        Entity &existEnt = entity->Get(ei);
+                                        if(existEnt.type != Entity::Type::LINE_SEGMENT) continue;
+                                        Entity *ep0 = entity->FindByIdNoOops(existEnt.point[0]);
+                                        Entity *ep1 = entity->FindByIdNoOops(existEnt.point[1]);
+                                        if(ep0 && ep1) {
+                                            Vector p0 = ep0->PointGetNum();
+                                            Vector p1 = ep1->PointGetNum();
+                                            if(p0.Equals(V1) || p0.Equals(V2) || p1.Equals(V1) || p1.Equals(V2)) {
                                                 existEnt.forceHidden = true;
                                             }
                                         }
@@ -1060,9 +1074,23 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                                 // since those vertices no longer exist in the filleted geometry.
                                                 for(int ei_f = 0; ei_f < entity->n; ei_f++) {
                                                     Entity &existEnt_f = entity->Get(ei_f);
-                                                    if(existEnt_f.group == opA && existEnt_f.IsPoint()) {
+                                                    if(existEnt_f.IsPoint()) {
                                                         Vector ep_f = existEnt_f.PointGetNum();
                                                         if(ep_f.Equals(V1) || ep_f.Equals(V2)) {
+                                                            existEnt_f.forceHidden = true;
+                                                        }
+                                                    }
+                                                }
+                                                // Also hide the LINE_SEGMENT entity connecting V1 to V2 from the opA group
+                                                for(int ei_f = 0; ei_f < entity->n; ei_f++) {
+                                                    Entity &existEnt_f = entity->Get(ei_f);
+                                                    if(existEnt_f.type != Entity::Type::LINE_SEGMENT) continue;
+                                                    Entity *ep0_f = entity->FindByIdNoOops(existEnt_f.point[0]);
+                                                    Entity *ep1_f = entity->FindByIdNoOops(existEnt_f.point[1]);
+                                                    if(ep0_f && ep1_f) {
+                                                        Vector p0_f = ep0_f->PointGetNum();
+                                                        Vector p1_f = ep1_f->PointGetNum();
+                                                        if(p0_f.Equals(V1) || p0_f.Equals(V2) || p1_f.Equals(V1) || p1_f.Equals(V2)) {
                                                             existEnt_f.forceHidden = true;
                                                         }
                                                     }
