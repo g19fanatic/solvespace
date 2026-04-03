@@ -801,6 +801,66 @@ void Group::Generate(EntityList *entity, ParamList *param)
             // One free parameter: the chamfer distance or fillet radius.
             // No entities are generated; geometry is produced in GenerateShellAndMesh.
             AddParam(param, h.param(0), valA);
+            {
+                // Generate a face entity for the chamfer/fillet surface so that
+                // SK.entity.FindById succeeds when the user clicks on the surface.
+                // Each triangle in the display mesh stores the face handle in
+                // meta.face; MakeSelected() calls SK.GetEntity() on that handle, so
+                // the entity MUST exist in SK.entity or we get an assertion crash.
+                //
+                // We use FACE_XPROD: FaceGetPointNum() returns numPoint directly
+                // (no params needed), and FaceGetNormalNum() = param[0..2].Cross(numNormal).
+                // Store the approximate chamfer normal bisector in the cross-product
+                // by choosing param[0..2] = d (a vector in one face's plane) and
+                // numNormal = another independent vector such that their cross product
+                // equals the bisector direction. The simplest encoding: pick the
+                // vector (nB + nC) as the stored normal directly in numNormal, and
+                // set param[0..2] to an arbitrary unit vector perpendicular to it
+                // (we can use any non-zero direction - the cross product will still
+                // produce a non-zero normal). Actually, the cleanest approach:
+                // just set numNormal = (nB + nC) normalised, and param[0..2] = t
+                // (a vector perpendicular to numNormal so the cross product is valid)
+                // Register 3 extra params (h.param(1..3)) for the FACE_XPROD cross product.
+                Entity *faceB = SK.entity.FindByIdNoOops(predef.entityB);
+                Entity *faceC = SK.entity.FindByIdNoOops(predef.entityC);
+                if(faceB && faceB->IsFace() && faceC && faceC->IsFace()) {
+                    Vector nb = faceB->FaceGetNormalNum().WithMagnitude(1);
+                    Vector nc = faceC->FaceGetNormalNum().WithMagnitude(1);
+                    // Approximate chamfer/fillet outward normal: bisector of the two face normals.
+                    Vector chamferNormal = nb.Plus(nc).WithMagnitude(1);
+                    // Choose a vector perpendicular to chamferNormal for the cross product.
+                    Vector perp = chamferNormal.Normal(0).WithMagnitude(1);
+
+                    // Register param[1..3] for the FACE_XPROD cross-product vector.
+                    AddParam(param, h.param(1), perp.x);
+                    AddParam(param, h.param(2), perp.y);
+                    AddParam(param, h.param(3), perp.z);
+
+                    Entity en = {};
+                    en.group = h;
+                    en.type  = Entity::Type::FACE_XPROD;
+                    // numPoint: approximate position on the chamfer face (use entityB's face point)
+                    en.numPoint  = faceB->FaceGetPointNum();
+                    // numNormal: second vector for cross product (the chamfer normal direction)
+                    en.numNormal = Quaternion::From(0,
+                                       chamferNormal.x, chamferNormal.y, chamferNormal.z);
+                    // param[0..2]: first vector for cross product (perp to chamferNormal)
+                    en.param[0]  = h.param(1);
+                    en.param[1]  = h.param(2);
+                    en.param[2]  = h.param(3);
+                    int remapId  = (type == Type::CHAMFER)
+                                       ? REMAP_CHAMFER_FACE
+                                       : REMAP_FILLET_FACE;
+                    en.h = Remap(predef.entityB, remapId);
+                    entity->Add(&en);
+                } else {
+                    // Source face entities not available yet; register dummy params so
+                    // that SK.GetParam() doesn't assert if FaceGetNormalNum is called.
+                    AddParam(param, h.param(1), 1.0);
+                    AddParam(param, h.param(2), 0.0);
+                    AddParam(param, h.param(3), 0.0);
+                }
+            }
             return;
         case Type::LINKED:
             // The translation vector
