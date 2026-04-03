@@ -61,6 +61,38 @@ static bool InsertPointIntoCurvePts(SCurve *sc, Vector P) {
 }
 
 //-----------------------------------------------------------------------------
+// Helper: truncate a curve's pts so it ends at `newEnd` instead of `oldEnd`.
+// Called after InsertPointIntoCurvePts to remove the stale original corner
+// vertex (V1 or V2) from the pts array of a neighboring curve.
+//
+// Precondition: newEnd is already in sc->pts (just inserted by InsertPointIntoCurvePts).
+// Idempotent: if oldEnd is no longer at either terminal, does nothing.
+//-----------------------------------------------------------------------------
+static void TruncateCurveAtVertex(SCurve *sc, Vector oldEnd, Vector newEnd) {
+    // Find newEnd in pts
+    int newIdx = -1;
+    for(int i = 0; i < sc->pts.n; i++) {
+        if(sc->pts[i].p.Equals(newEnd)) { newIdx = i; break; }
+    }
+    if(newIdx < 0) return;
+
+    List<SCurvePt> newPts = {};
+    if(sc->pts[0].p.Equals(oldEnd)) {
+        // oldEnd at start: keep pts[newIdx..n-1]
+        for(int i = newIdx; i < sc->pts.n; i++) newPts.Add(&sc->pts[i]);
+    } else if(sc->pts[sc->pts.n - 1].p.Equals(oldEnd)) {
+        // oldEnd at end: keep pts[0..newIdx]
+        for(int i = 0; i <= newIdx; i++) newPts.Add(&sc->pts[i]);
+    } else {
+        newPts.Clear();
+        return;  // oldEnd not at either end — already truncated (idempotent), skip
+    }
+    sc->pts.Clear();
+    for(int i = 0; i < newPts.n; i++) sc->pts.Add(&newPts[i]);
+    newPts.Clear();
+}
+
+//-----------------------------------------------------------------------------
 // Helper: add a new straight SCurve between two points, assigning surfA and
 // surfB, and populating pts via MakePwlInto.
 //-----------------------------------------------------------------------------
@@ -386,17 +418,21 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
 
             if(stb_n.start.Equals(V1)) {
                 InsertPointIntoCurvePts(nc, A);
+                TruncateCurveAtVertex(nc, V1, A);
                 stb_n.start = A;
             } else if(stb_n.start.Equals(V2)) {
                 InsertPointIntoCurvePts(nc, B);
+                TruncateCurveAtVertex(nc, V2, B);
                 stb_n.start = B;
             }
 
             if(stb_n.finish.Equals(V1)) {
                 InsertPointIntoCurvePts(nc, A);
+                TruncateCurveAtVertex(nc, V1, A);
                 stb_n.finish = A;
             } else if(stb_n.finish.Equals(V2)) {
                 InsertPointIntoCurvePts(nc, B);
+                TruncateCurveAtVertex(nc, V2, B);
                 stb_n.finish = B;
             }
         }
@@ -445,17 +481,21 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
 
             if(stb_n.start.Equals(V1)) {
                 InsertPointIntoCurvePts(nc, D);
+                TruncateCurveAtVertex(nc, V1, D);
                 stb_n.start = D;
             } else if(stb_n.start.Equals(V2)) {
                 InsertPointIntoCurvePts(nc, C);
+                TruncateCurveAtVertex(nc, V2, C);
                 stb_n.start = C;
             }
 
             if(stb_n.finish.Equals(V1)) {
                 InsertPointIntoCurvePts(nc, D);
+                TruncateCurveAtVertex(nc, V1, D);
                 stb_n.finish = D;
             } else if(stb_n.finish.Equals(V2)) {
                 InsertPointIntoCurvePts(nc, C);
+                TruncateCurveAtVertex(nc, V2, C);
                 stb_n.finish = C;
             }
         }
@@ -475,10 +515,14 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(stb_c.start.Equals(V1)) {
                 if(bordersSurf1) { InsertPointIntoCurvePts(nc, A); stb_c.start = A; }
                 else if(bordersSurf2) { InsertPointIntoCurvePts(nc, D); stb_c.start = D; }
+                if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A);
+                else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, D);
             }
             if(stb_c.finish.Equals(V1)) {
                 if(bordersSurf1) { InsertPointIntoCurvePts(nc, A); stb_c.finish = A; }
                 else if(bordersSurf2) { InsertPointIntoCurvePts(nc, D); stb_c.finish = D; }
+                if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A);
+                else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, D);
             }
         }
         // Detect gap direction: which endpoint (A or D) is the 'finish' of an existing trim?
@@ -501,10 +545,14 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(stb_c.start.Equals(V2)) {
                 if(bordersSurf1) { InsertPointIntoCurvePts(nc, B); stb_c.start = B; }
                 else if(bordersSurf2) { InsertPointIntoCurvePts(nc, C); stb_c.start = C; }
+                if(bordersSurf1) TruncateCurveAtVertex(nc, V2, B);
+                else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, C);
             }
             if(stb_c.finish.Equals(V2)) {
                 if(bordersSurf1) { InsertPointIntoCurvePts(nc, B); stb_c.finish = B; }
                 else if(bordersSurf2) { InsertPointIntoCurvePts(nc, C); stb_c.finish = C; }
+                if(bordersSurf1) TruncateCurveAtVertex(nc, V2, B);
+                else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, C);
             }
         }
         // Detect gap direction for V2 end: which endpoint (B or C) is the 'finish' of an existing trim?
@@ -856,16 +904,20 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 if(!nc) continue;
                 if(stb_n.start.Equals(V1)) {
                     InsertPointIntoCurvePts(nc, A0);
+                    TruncateCurveAtVertex(nc, V1, A0);
                     stb_n.start = A0;
                 } else if(stb_n.start.Equals(V2)) {
                     InsertPointIntoCurvePts(nc, A1);
+                    TruncateCurveAtVertex(nc, V2, A1);
                     stb_n.start = A1;
                 }
                 if(stb_n.finish.Equals(V1)) {
                     InsertPointIntoCurvePts(nc, A0);
+                    TruncateCurveAtVertex(nc, V1, A0);
                     stb_n.finish = A0;
                 } else if(stb_n.finish.Equals(V2)) {
                     InsertPointIntoCurvePts(nc, A1);
+                    TruncateCurveAtVertex(nc, V2, A1);
                     stb_n.finish = A1;
                 }
             }
@@ -904,16 +956,20 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 if(!nc) continue;
                 if(stb_n.start.Equals(V1)) {
                     InsertPointIntoCurvePts(nc, B0);
+                    TruncateCurveAtVertex(nc, V1, B0);
                     stb_n.start = B0;
                 } else if(stb_n.start.Equals(V2)) {
                     InsertPointIntoCurvePts(nc, B1);
+                    TruncateCurveAtVertex(nc, V2, B1);
                     stb_n.start = B1;
                 }
                 if(stb_n.finish.Equals(V1)) {
                     InsertPointIntoCurvePts(nc, B0);
+                    TruncateCurveAtVertex(nc, V1, B0);
                     stb_n.finish = B0;
                 } else if(stb_n.finish.Equals(V2)) {
                     InsertPointIntoCurvePts(nc, B1);
+                    TruncateCurveAtVertex(nc, V2, B1);
                     stb_n.finish = B1;
                 }
             }
@@ -934,10 +990,14 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 if(stb_c.start.Equals(V1)) {
                     if(bordersSurf1) { InsertPointIntoCurvePts(nc, A0); stb_c.start = A0; }
                     else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B0); stb_c.start = B0; }
+                    if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A0);
+                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, B0);
                 }
                 if(stb_c.finish.Equals(V1)) {
                     if(bordersSurf1) { InsertPointIntoCurvePts(nc, A0); stb_c.finish = A0; }
                     else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B0); stb_c.finish = B0; }
+                    if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A0);
+                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, B0);
                 }
             }
             // Detect gap direction for fillet V1 end: which endpoint (A0 or B0) is the 'finish'?
@@ -959,10 +1019,14 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 if(stb_c.start.Equals(V2)) {
                     if(bordersSurf1) { InsertPointIntoCurvePts(nc, A1); stb_c.start = A1; }
                     else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B1); stb_c.start = B1; }
+                    if(bordersSurf1) TruncateCurveAtVertex(nc, V2, A1);
+                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, B1);
                 }
                 if(stb_c.finish.Equals(V2)) {
                     if(bordersSurf1) { InsertPointIntoCurvePts(nc, A1); stb_c.finish = A1; }
                     else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B1); stb_c.finish = B1; }
+                    if(bordersSurf1) TruncateCurveAtVertex(nc, V2, A1);
+                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, B1);
                 }
             }
             // Detect gap direction for fillet V2 end: which endpoint (A1 or B1) is the 'finish'?

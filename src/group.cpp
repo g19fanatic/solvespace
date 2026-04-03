@@ -861,6 +861,225 @@ void Group::Generate(EntityList *entity, ParamList *param)
                     AddParam(param, h.param(3), 0.0);
                 }
             }
+            // For CHAMFER only: generate setback point entities at A, B, D, C.
+            // These are computed by replaying Steps 2-8 of MakeFromChamferOf,
+            // using opA's runningShell which is available at Generate() time
+            // (GenerateAll processes each group's Generate + GenerateShellAndMesh
+            // in sequence, so opA's shell is populated before we get here).
+            if(type == Type::CHAMFER) {
+                SShell *srcShell = &SK.GetGroup(opA)->runningShell;
+                if(srcShell->surface.n > 0) {
+                    double dist = valA;
+                    hEntity entityB_h = predef.entityB;
+                    hEntity entityC_h = predef.entityC;
+
+                    // Find surf1 and surf2 by face handle (same as MakeFromChamferOf Step 2)
+                    hSSurface hSurf1 = { 0 }, hSurf2 = { 0 };
+                    for(SSurface &ss : srcShell->surface) {
+                        if(ss.face == entityB_h.v) hSurf1 = ss.h;
+                        if(ss.face == entityC_h.v) hSurf2 = ss.h;
+                    }
+
+                    if(hSurf1.v != 0 && hSurf2.v != 0) {
+                        // Find shared SCurve (Step 4)
+                        hSCurve hSharedSC = { 0 };
+                        for(SCurve &sc : srcShell->curve) {
+                            if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
+                               (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
+                                hSharedSC = sc.h;
+                                break;
+                            }
+                        }
+
+                        if(hSharedSC.v != 0) {
+                            SCurve *sharedSC = srcShell->curve.FindById(hSharedSC);
+                            if(sharedSC->pts.n >= 2) {
+                                Vector V1 = sharedSC->pts[0].p;
+                                Vector V2 = sharedSC->pts[sharedSC->pts.n - 1].p;
+                                Vector edgeVec = V2.Minus(V1);
+                                double edgeLen = edgeVec.Magnitude();
+
+                                if(edgeLen > LENGTH_EPS && dist > LENGTH_EPS &&
+                                   dist <= edgeLen / 2.0) {
+                                    Vector t = edgeVec.WithMagnitude(1);
+
+                                    SSurface *surf1 = srcShell->surface.FindById(hSurf1);
+                                    SSurface *surf2 = srcShell->surface.FindById(hSurf2);
+
+                                    // Step 6: normals at edge midpoint
+                                    Vector edgeMid = V1.Plus(V2).ScaledBy(0.5);
+                                    Point2d uv1, uv2;
+                                    surf1->ClosestPointTo(edgeMid, &uv1);
+                                    surf2->ClosestPointTo(edgeMid, &uv2);
+                                    Vector n1 = surf1->NormalAt(uv1).WithMagnitude(1);
+                                    Vector n2 = surf2->NormalAt(uv2).WithMagnitude(1);
+
+                                    // Step 7: inward offset directions
+                                    Vector d1 = n1.Cross(t).WithMagnitude(1);
+                                    Vector d2 = n2.Cross(t).WithMagnitude(1);
+                                    Vector c1 = surf1->ctrl[0][0].Plus(surf1->ctrl[0][1])
+                                                     .Plus(surf1->ctrl[1][0])
+                                                     .Plus(surf1->ctrl[1][1]).ScaledBy(0.25);
+                                    if(d1.Dot(c1.Minus(V1)) < 0) d1 = d1.ScaledBy(-1);
+                                    Vector c2 = surf2->ctrl[0][0].Plus(surf2->ctrl[0][1])
+                                                     .Plus(surf2->ctrl[1][0])
+                                                     .Plus(surf2->ctrl[1][1]).ScaledBy(0.25);
+                                    if(d2.Dot(c2.Minus(V1)) < 0) d2 = d2.ScaledBy(-1);
+
+                                    // Step 7b: orientation normalization (same swap as MakeFromChamferOf)
+                                    Vector expectedNormal = t.Cross(d2.Minus(d1));
+                                    if(expectedNormal.Dot(n1.Plus(n2)) > 0) {
+                                        std::swap(d1, d2);
+                                    }
+
+                                    // Step 8: compute setback points
+                                    Vector A = V1.Plus(d1.ScaledBy(dist));
+                                    Vector B = V2.Plus(d1.ScaledBy(dist));
+                                    Vector D = V1.Plus(d2.ScaledBy(dist));
+                                    Vector C = V2.Plus(d2.ScaledBy(dist));
+
+                                    // Generate POINT_N_COPY entities (no params needed;
+                                    // POINT_N_COPY::PointGetNum() returns numPoint directly).
+                                    auto addPt = [&](Vector pt, int remapId) {
+                                        Entity en = {};
+                                        en.group = h;
+                                        en.type = Entity::Type::POINT_N_COPY;
+                                        en.numPoint = pt;
+                                        en.h = Remap(predef.entityB, remapId);
+                                        entity->Add(&en);
+                                    };
+                                    addPt(A, REMAP_CHAMFER_PT_A);
+                                    addPt(B, REMAP_CHAMFER_PT_B);
+                                    addPt(D, REMAP_CHAMFER_PT_D);
+                                    addPt(C, REMAP_CHAMFER_PT_C);
+                                    // Also generate LINE_SEGMENT entities for the 4 chamfer
+                                    // boundary edges, referencing the POINT_N_COPY entities above.
+                                    auto addEdge = [&](int remap0, int remap1, int edgeRemap) {
+                                        Entity en = {};
+                                        en.group = h;
+                                        en.type = Entity::Type::LINE_SEGMENT;
+                                        en.point[0] = Remap(predef.entityB, remap0);
+                                        en.point[1] = Remap(predef.entityB, remap1);
+                                        en.h = Remap(predef.entityB, edgeRemap);
+                                        entity->Add(&en);
+                                    };
+                                    addEdge(REMAP_CHAMFER_PT_A, REMAP_CHAMFER_PT_B, REMAP_CHAMFER_EDGE_AB);  // surf1 contact edge
+                                    addEdge(REMAP_CHAMFER_PT_D, REMAP_CHAMFER_PT_C, REMAP_CHAMFER_EDGE_DC);  // surf2 contact edge
+                                    addEdge(REMAP_CHAMFER_PT_A, REMAP_CHAMFER_PT_D, REMAP_CHAMFER_EDGE_AD);  // top cap at V1
+                                    addEdge(REMAP_CHAMFER_PT_B, REMAP_CHAMFER_PT_C, REMAP_CHAMFER_EDGE_BC);  // bottom cap at V2
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // For FILLET only: generate tangent contact point entities at A0, A1, B0, B1.
+            // These are computed by replaying Steps 2-8 of MakeFromFilletOf,
+            // using opA's runningShell which is available at Generate() time.
+            // setback = r / tan(half_angle), where half_angle = acos(-n1.Dot(n2)) / 2.
+            if(type == Type::FILLET) {
+                SShell *srcShell = &SK.GetGroup(opA)->runningShell;
+                if(srcShell->surface.n > 0) {
+                    double r = valA;
+                    hEntity entityB_h = predef.entityB;
+                    hEntity entityC_h = predef.entityC;
+
+                    hSSurface hSurf1 = { 0 }, hSurf2 = { 0 };
+                    for(SSurface &ss : srcShell->surface) {
+                        if(ss.face == entityB_h.v) hSurf1 = ss.h;
+                        if(ss.face == entityC_h.v) hSurf2 = ss.h;
+                    }
+
+                    if(hSurf1.v != 0 && hSurf2.v != 0) {
+                        hSCurve hSharedSC = { 0 };
+                        for(SCurve &sc : srcShell->curve) {
+                            if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
+                               (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
+                                hSharedSC = sc.h;
+                                break;
+                            }
+                        }
+
+                        if(hSharedSC.v != 0) {
+                            SCurve *sharedSC = srcShell->curve.FindById(hSharedSC);
+                            if(sharedSC->pts.n >= 2) {
+                                Vector V1 = sharedSC->pts[0].p;
+                                Vector V2 = sharedSC->pts[sharedSC->pts.n - 1].p;
+                                Vector edgeVec = V2.Minus(V1);
+                                double edgeLen = edgeVec.Magnitude();
+
+                                if(edgeLen > LENGTH_EPS && r > LENGTH_EPS) {
+                                    Vector t = edgeVec.WithMagnitude(1);
+                                    SSurface *surf1 = srcShell->surface.FindById(hSurf1);
+                                    SSurface *surf2 = srcShell->surface.FindById(hSurf2);
+                                    Vector edgeMid = V1.Plus(V2).ScaledBy(0.5);
+                                    Point2d uv1, uv2;
+                                    surf1->ClosestPointTo(edgeMid, &uv1);
+                                    surf2->ClosestPointTo(edgeMid, &uv2);
+                                    Vector n1 = surf1->NormalAt(uv1).WithMagnitude(1);
+                                    Vector n2 = surf2->NormalAt(uv2).WithMagnitude(1);
+                                    double cosAngle = -n1.Dot(n2);
+                                    if(cosAngle < -1.0) cosAngle = -1.0;
+                                    if(cosAngle >  1.0) cosAngle =  1.0;
+                                    if(cosAngle >= 0.0) {
+                                        double half_angle = acos(cosAngle) / 2.0;
+                                        double tanHalf = tan(half_angle);
+                                        if(fabs(tanHalf) > 1e-10) {
+                                            double setback = r / tanHalf;
+                                            if(setback <= edgeLen / 2.0) {
+                                                Vector d1 = n1.Cross(t).WithMagnitude(1);
+                                                Vector d2 = n2.Cross(t).WithMagnitude(1);
+                                                Vector c1 = surf1->ctrl[0][0].Plus(surf1->ctrl[0][1])
+                                                                 .Plus(surf1->ctrl[1][0])
+                                                                 .Plus(surf1->ctrl[1][1]).ScaledBy(0.25);
+                                                if(d1.Dot(c1.Minus(V1)) < 0) d1 = d1.ScaledBy(-1);
+                                                Vector c2 = surf2->ctrl[0][0].Plus(surf2->ctrl[0][1])
+                                                                 .Plus(surf2->ctrl[1][0])
+                                                                 .Plus(surf2->ctrl[1][1]).ScaledBy(0.25);
+                                                if(d2.Dot(c2.Minus(V1)) < 0) d2 = d2.ScaledBy(-1);
+                                                Vector expectedNormal = t.Cross(d2.Minus(d1));
+                                                if(expectedNormal.Dot(n1.Plus(n2)) > 0) {
+                                                    std::swap(d1, d2);
+                                                }
+                                                Vector A0 = V1.Plus(d1.ScaledBy(setback));
+                                                Vector A1 = V2.Plus(d1.ScaledBy(setback));
+                                                Vector B0 = V1.Plus(d2.ScaledBy(setback));
+                                                Vector B1 = V2.Plus(d2.ScaledBy(setback));
+                                                auto addPt = [&](Vector pt, int remapId) {
+                                                    Entity en = {};
+                                                    en.group = h;
+                                                    en.type = Entity::Type::POINT_N_COPY;
+                                                    en.numPoint = pt;
+                                                    en.h = Remap(predef.entityB, remapId);
+                                                    entity->Add(&en);
+                                                };
+                                                addPt(A0, REMAP_FILLET_PT_A);
+                                                addPt(A1, REMAP_FILLET_PT_B);
+                                                addPt(B0, REMAP_FILLET_PT_D);
+                                                addPt(B1, REMAP_FILLET_PT_C);
+                                                // Also generate LINE_SEGMENT entities for the 2 fillet
+                                                // contact edges (straight lines on each adjacent face).
+                                                // Cap arcs at V1 and V2 are non-linear; TODO.
+                                                auto addEdge = [&](int remap0, int remap1, int edgeRemap) {
+                                                    Entity en = {};
+                                                    en.group = h;
+                                                    en.type = Entity::Type::LINE_SEGMENT;
+                                                    en.point[0] = Remap(predef.entityB, remap0);
+                                                    en.point[1] = Remap(predef.entityB, remap1);
+                                                    en.h = Remap(predef.entityB, edgeRemap);
+                                                    entity->Add(&en);
+                                                };
+                                                addEdge(REMAP_FILLET_PT_A, REMAP_FILLET_PT_B, REMAP_FILLET_EDGE_AB);  // surf1 contact
+                                                addEdge(REMAP_FILLET_PT_D, REMAP_FILLET_PT_C, REMAP_FILLET_EDGE_DC);  // surf2 contact
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return;
         case Type::LINKED:
             // The translation vector

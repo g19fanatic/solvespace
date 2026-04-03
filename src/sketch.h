@@ -317,6 +317,24 @@ public:
         REMAP_LATHE_ARC_CENTER = 1010,
         REMAP_CHAMFER_FACE = 1011,
         REMAP_FILLET_FACE  = 1012,
+        // Setback point entities for chamfer (replayed geometry at Generate() time)
+        REMAP_CHAMFER_PT_A = 1013,  // V1 setback on surf1 (after orientation swap)
+        REMAP_CHAMFER_PT_B = 1014,  // V2 setback on surf1
+        REMAP_CHAMFER_PT_D = 1015,  // V1 setback on surf2
+        REMAP_CHAMFER_PT_C = 1016,  // V2 setback on surf2
+        // Setback point entities for fillet (replayed geometry at Generate() time)
+        REMAP_FILLET_PT_A = 1017,   // V1 tangent contact on surf1 (after orientation swap)
+        REMAP_FILLET_PT_B = 1018,   // V2 tangent contact on surf1
+        REMAP_FILLET_PT_D = 1019,   // V1 tangent contact on surf2
+        REMAP_FILLET_PT_C = 1020,   // V2 tangent contact on surf2
+        // LINE_SEGMENT boundary edge entities for chamfer
+        REMAP_CHAMFER_EDGE_AB = 1021,  // contact edge: PT_A-PT_B (setback on surf1)
+        REMAP_CHAMFER_EDGE_DC = 1022,  // contact edge: PT_D-PT_C (setback on surf2)
+        REMAP_CHAMFER_EDGE_AD = 1023,  // top cap: PT_A-PT_D (at V1)
+        REMAP_CHAMFER_EDGE_BC = 1024,  // bottom cap: PT_B-PT_C (at V2)
+        // LINE_SEGMENT contact edges for fillet (straight lines only; cap arcs TODO)
+        REMAP_FILLET_EDGE_AB  = 1025,  // contact edge: PT_A-PT_B (setback on surf1)
+        REMAP_FILLET_EDGE_DC  = 1026,  // contact edge: PT_D-PT_C (setback on surf2)
     };
     hEntity Remap(hEntity in, int copyNumber);
     void MakeExtrusionLines(EntityList *el, hEntity in);
