@@ -1184,3 +1184,94 @@ TEST_CASE(fillet_has_contact_line_entities) {
     // Should have exactly 2 line segments for the straight contact edges.
     CHECK_TRUE(lineCount == 2);
 }
+
+//-----------------------------------------------------------------------------
+// Task 15: Original extrude vertices V1/V2 should be forceHidden after chamfer/fillet.
+//
+// When a chamfer/fillet removes the shared edge V1-V2, the point entities from
+// the extrude group at V1 and V2 should have forceHidden=true so they don't
+// appear as selectable green dots in the UI.
+
+TEST_CASE(chamfer_original_vertices_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // V1 and V2 BEFORE chamfer: extrude group point entities at (20,0,0) and (20,0,20)
+    Vector V1 = Vector::From(20, 0,  0);
+    Vector V2 = Vector::From(20, 0, 80);
+
+    // Before chamfer: V1/V2 entities should NOT be forceHidden
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(!e.IsPoint()) continue;
+        Vector p = e.PointGetNum();
+        if(p.Equals(V1) || p.Equals(V2)) {
+            CHECK_FALSE(e.forceHidden);
+        }
+    }
+
+    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // After chamfer: V1/V2 entities from the extrude group should be forceHidden
+    bool foundV1 = false, foundV2 = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(!e.IsPoint()) continue;
+        Vector p = e.PointGetNum();
+        if(p.Equals(V1)) {
+            CHECK_TRUE(e.forceHidden);
+            foundV1 = true;
+        }
+        if(p.Equals(V2)) {
+            CHECK_TRUE(e.forceHidden);
+            foundV2 = true;
+        }
+    }
+    CHECK_TRUE(foundV1);
+    CHECK_TRUE(foundV2);
+}
+
+TEST_CASE(fillet_original_vertices_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    Vector V1 = Vector::From(20, 0,  0);
+    Vector V2 = Vector::From(20, 0, 80);
+
+    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // After fillet: V1/V2 entities from the extrude group should be forceHidden
+    bool foundV1 = false, foundV2 = false;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(!e.IsPoint()) continue;
+        Vector p = e.PointGetNum();
+        if(p.Equals(V1)) {
+            CHECK_TRUE(e.forceHidden);
+            foundV1 = true;
+        }
+        if(p.Equals(V2)) {
+            CHECK_TRUE(e.forceHidden);
+            foundV2 = true;
+        }
+    }
+    CHECK_TRUE(foundV1);
+    CHECK_TRUE(foundV2);
+}

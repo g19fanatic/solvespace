@@ -940,6 +940,17 @@ void Group::Generate(EntityList *entity, ParamList *param)
 
                                     // Generate POINT_N_COPY entities (no params needed;
                                     // POINT_N_COPY::PointGetNum() returns numPoint directly).
+                                    // Hide the original extrude group's point entities at V1 and V2,
+                                    // since those vertices no longer exist in the chamfered geometry.
+                                    for(int ei = 0; ei < entity->n; ei++) {
+                                        Entity &existEnt = entity->Get(ei);
+                                        if(existEnt.group == opA && existEnt.IsPoint()) {
+                                            Vector ep_ch = existEnt.PointGetNum();
+                                            if(ep_ch.Equals(V1) || ep_ch.Equals(V2)) {
+                                                existEnt.forceHidden = true;
+                                            }
+                                        }
+                                    }
                                     auto addPt = [&](Vector pt, int remapId) {
                                         Entity en = {};
                                         en.group = h;
@@ -1045,6 +1056,17 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                                 Vector A1 = V2.Plus(d1.ScaledBy(setback));
                                                 Vector B0 = V1.Plus(d2.ScaledBy(setback));
                                                 Vector B1 = V2.Plus(d2.ScaledBy(setback));
+                                                // Hide the original extrude group's point entities at V1 and V2,
+                                                // since those vertices no longer exist in the filleted geometry.
+                                                for(int ei_f = 0; ei_f < entity->n; ei_f++) {
+                                                    Entity &existEnt_f = entity->Get(ei_f);
+                                                    if(existEnt_f.group == opA && existEnt_f.IsPoint()) {
+                                                        Vector ep_f = existEnt_f.PointGetNum();
+                                                        if(ep_f.Equals(V1) || ep_f.Equals(V2)) {
+                                                            existEnt_f.forceHidden = true;
+                                                        }
+                                                    }
+                                                }
                                                 auto addPt = [&](Vector pt, int remapId) {
                                                     Entity en = {};
                                                     en.group = h;
