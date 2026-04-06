@@ -109,6 +109,203 @@ static hSCurve AddLinearCurve(SShell *shell, Vector from, Vector to,
 }
 
 //-----------------------------------------------------------------------------
+// Helper: remove the last entry from ss->trim.
+//-----------------------------------------------------------------------------
+static void RemoveTrimLast(SSurface *ss) {
+    if(ss->trim.n == 0) return;
+    List<STrimBy> tmp = {};
+    for(int i = 0; i < ss->trim.n - 1; i++) tmp.Add(&ss->trim[i]);
+    ss->trim.Clear();
+    for(int i = 0; i < tmp.n; i++) ss->trim.Add(&tmp[i]);
+    tmp.Clear();
+}
+
+//-----------------------------------------------------------------------------
+// Helper: After TruncateCurveAtVertex modifies a curve's pts, update ALL
+// surfaces' STrimBy entries that reference that curve and still have oldPt
+// as their start or finish. This propagates endpoint changes to surfaces
+// not directly processed in Steps 12/13.
+//-----------------------------------------------------------------------------
+static void UpdateAllSurfaceTrimEndpoints(SShell *shell, hSCurve hSC,
+                                          Vector oldPt, Vector newPt) {
+    for(SSurface &ss : shell->surface) {
+        for(STrimBy &stb : ss.trim) {
+            if(stb.curve != hSC) continue;
+            if(stb.start.Equals(oldPt))  stb.start  = newPt;
+            if(stb.finish.Equals(oldPt)) stb.finish = newPt;
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Helper: find the first gap in a trim polygon.
+// Returns the index i such that trim[i].finish != trim[(i+1)%n].start.
+// Sets *gapEnd = trim[i].finish, *gapStart = trim[(i+1)%n].start.
+// Returns -1 if the polygon is closed (no gap found).
+//-----------------------------------------------------------------------------
+static int FindTrimGap(SSurface *ss, Vector *gapEnd, Vector *gapStart) {
+    if(ss->trim.n < 2) return -1;
+    for(int i = 0; i < ss->trim.n; i++) {
+        const STrimBy &cur = ss->trim[i];
+        const STrimBy &nxt = ss->trim[(i + 1) % ss->trim.n];
+        if(!cur.finish.Equals(nxt.start)) {
+            *gapEnd   = cur.finish;
+            *gapStart = nxt.start;
+            return i;
+        }
+    }
+    return -1;
+}
+
+//-----------------------------------------------------------------------------
+// Helper: insert newStb into ss->trim at position insertAfter+1, preserving
+// all existing entries. Used to close a gap at an arbitrary trim position.
+//-----------------------------------------------------------------------------
+static void InsertTrimAt(SSurface *ss, int insertAfter, STrimBy *newStb) {
+    List<STrimBy> tmp = {};
+    for(int i = 0; i <= insertAfter; i++) tmp.Add(&ss->trim[i]);
+    tmp.Add(newStb);
+    for(int i = insertAfter + 1; i < ss->trim.n; i++) tmp.Add(&ss->trim[i]);
+    ss->trim.Clear();
+    for(int i = 0; i < tmp.n; i++) ss->trim.Add(&tmp[i]);
+    tmp.Clear();
+}
+
+//-----------------------------------------------------------------------------
+// Helper: bridge any open trim polygon gap in surface hSurf of shell, by
+// adding a new linear SCurve from gapEnd to gapStart with the given surfA.
+// The new curve is added to hSurf's trim at the gap position.
+// Does nothing if the trim polygon is already closed.
+//
+// APPROACH:
+// 1. Pre-pass: remove degenerate trims (start==finish).
+// 2. Find a simple closed sub-chain of maximum size that has NO branch points
+//    (no two trims sharing the same .start). This is the main face boundary.
+//    Any trims not in this sub-chain are orphaned and are removed.
+// 3. If the remaining polygon is open, add a bridge curve to close it.
+//-----------------------------------------------------------------------------
+static void BridgeTrimGapIfOpen(SShell *shell, hSSurface hSurf, hSSurface surfA) {
+    SSurface *ss = shell->surface.FindById(hSurf);
+    if(ss->trim.n < 2) return;
+    // Pre-pass: remove degenerate trims (start==finish).
+    {
+        bool hasDegen = false;
+        for(int i = 0; i < ss->trim.n; i++) {
+            if(ss->trim[i].start.Equals(ss->trim[i].finish)) { hasDegen = true; break; }
+        }
+        if(hasDegen) {
+            List<STrimBy> kept = {};
+            for(int i = 0; i < ss->trim.n; i++) {
+                if(!ss->trim[i].start.Equals(ss->trim[i].finish))
+                    kept.Add(&ss->trim[i]);
+            }
+            ss->trim.Clear();
+            for(int i = 0; i < kept.n; i++) ss->trim.Add(&kept[i]);
+            kept.Clear();
+            if(ss->trim.n < 2) return;
+        }
+    }
+    // Find the largest simple closed sub-chain with no branch points.
+    // Strategy: try each trim as chain start, follow the chain. Among all
+    // chains that close back to their start (closed sub-chains), keep the
+    // LARGEST one. Trims not in that chain are orphaned and removed.
+    // For open chains (no closure found), keep the deepest chain and bridge.
+    //
+    // Branch detection: when two trims share the same .start, the polygon is
+    // ambiguous. We pick the FIRST match for each step (greedy traversal).
+    // The largest closed sub-chain is the correct main polygon.
+    int  n            = ss->trim.n;
+    int  bestStart    = -1;
+    int  bestLastIdx  = -1;
+    int  bestVisited  = -1;
+    Vector bestGapEnd   = {};
+    Vector bestGapStart = {};
+    std::vector<bool> bestVis(n, false);
+    bool foundClosed   = false;   // Did we find ANY closed sub-chain?
+    int  bestClosedCnt = -1;      // Size of largest closed sub-chain found
+
+    for(int s = 0; s < n; s++) {
+        std::vector<bool> vis(n, false);
+        vis[s] = true;
+        Vector sPt  = ss->trim[s].start;
+        Vector cur  = ss->trim[s].finish;
+        int    last = s;
+        int    cnt  = 1;
+        bool   ok   = true;
+        for(int iter = 1; iter < n; iter++) {
+            // Check if we've closed the loop already
+            if(cur.Equals(sPt)) break;
+            bool found = false;
+            for(int j = 0; j < n; j++) {
+                if(vis[j]) continue;
+                if(cur.Equals(ss->trim[j].start)) {
+                    cur = ss->trim[j].finish;
+                    last = j;
+                    vis[j] = true;
+                    found = true;
+                    cnt++;
+                    break;
+                }
+            }
+            if(!found) { ok = false; break; }
+        }
+        bool closed = ok && cur.Equals(sPt);
+        if(closed) {
+            // Closed sub-chain of length cnt
+            if(cnt > bestClosedCnt) {
+                foundClosed    = true;
+                bestClosedCnt  = cnt;
+                bestVisited    = cnt;
+                bestVis        = vis;
+                bestStart      = s;
+                bestLastIdx    = last;
+                bestGapEnd     = cur;
+                bestGapStart   = sPt;
+            }
+        } else if(!foundClosed && cnt > bestVisited) {
+            // No closed chain found yet — keep the deepest open chain
+            bestVisited  = cnt;
+            bestStart    = s;
+            bestLastIdx  = last;
+            bestGapEnd   = cur;
+            bestGapStart = sPt;
+            bestVis      = vis;
+        }
+    }
+
+    // Remove any trims not in the best chain (orphaned or sub-loop)
+    ss = shell->surface.FindById(hSurf);
+    n = ss->trim.n;
+    if(bestVisited < n) {
+        List<STrimBy> kept = {};
+        int removed_before_last = 0;
+        for(int i = 0; i < ss->trim.n; i++) {
+            if(bestVis[i]) {
+                kept.Add(&ss->trim[i]);
+            } else {
+                if(i < bestLastIdx) removed_before_last++;
+            }
+        }
+        bestLastIdx -= removed_before_last;
+        ss->trim.Clear();
+        for(int i = 0; i < kept.n; i++) ss->trim.Add(&kept[i]);
+        kept.Clear();
+    }
+
+    if(foundClosed) return;  // Polygon is closed (after orphan removal)
+    if(bestStart < 0) return;
+
+    // Open polygon: bridge the gap from gapEnd to gapStart
+    Vector gapEnd   = bestGapEnd;
+    Vector gapStart = bestGapStart;
+    int    gapIdx   = bestLastIdx;
+    ss = shell->surface.FindById(hSurf);
+    hSCurve hBridge = AddLinearCurve(shell, gapEnd, gapStart, surfA, hSurf);
+    ss = shell->surface.FindById(hSurf);
+    STrimBy stbBridge = STrimBy::EntireCurve(shell, hBridge, false);
+    InsertTrimAt(ss, gapIdx, &stbBridge);
+}
+//-----------------------------------------------------------------------------
 // SShell::MakeFromChamferOf
 //
 // Creates a new shell that is a copy of `src` with a chamfer applied at the
@@ -417,23 +614,15 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             SCurve *nc = curve.FindByIdNoOops(stb_n.curve);
 
             if(stb_n.start.Equals(V1)) {
-                InsertPointIntoCurvePts(nc, A);
-                TruncateCurveAtVertex(nc, V1, A);
-                stb_n.start = A;
+                if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_n.start = A; }
             } else if(stb_n.start.Equals(V2)) {
-                InsertPointIntoCurvePts(nc, B);
-                TruncateCurveAtVertex(nc, V2, B);
-                stb_n.start = B;
+                if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_n.start = B; }
             }
 
             if(stb_n.finish.Equals(V1)) {
-                InsertPointIntoCurvePts(nc, A);
-                TruncateCurveAtVertex(nc, V1, A);
-                stb_n.finish = A;
+                if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_n.finish = A; }
             } else if(stb_n.finish.Equals(V2)) {
-                InsertPointIntoCurvePts(nc, B);
-                TruncateCurveAtVertex(nc, V2, B);
-                stb_n.finish = B;
+                if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_n.finish = B; }
             }
         }
     }
@@ -480,23 +669,15 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             SCurve *nc = curve.FindByIdNoOops(stb_n.curve);
 
             if(stb_n.start.Equals(V1)) {
-                InsertPointIntoCurvePts(nc, D);
-                TruncateCurveAtVertex(nc, V1, D);
-                stb_n.start = D;
+                if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_n.start = D; }
             } else if(stb_n.start.Equals(V2)) {
-                InsertPointIntoCurvePts(nc, C);
-                TruncateCurveAtVertex(nc, V2, C);
-                stb_n.start = C;
+                if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_n.start = C; }
             }
 
             if(stb_n.finish.Equals(V1)) {
-                InsertPointIntoCurvePts(nc, D);
-                TruncateCurveAtVertex(nc, V1, D);
-                stb_n.finish = D;
+                if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_n.finish = D; }
             } else if(stb_n.finish.Equals(V2)) {
-                InsertPointIntoCurvePts(nc, C);
-                TruncateCurveAtVertex(nc, V2, C);
-                stb_n.finish = C;
+                if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_n.finish = C; }
             }
         }
     }
@@ -513,27 +694,50 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
             bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
             if(stb_c.start.Equals(V1)) {
-                if(bordersSurf1) { InsertPointIntoCurvePts(nc, A); stb_c.start = A; }
-                else if(bordersSurf2) { InsertPointIntoCurvePts(nc, D); stb_c.start = D; }
-                if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A);
-                else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, D);
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_c.start = A; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_c.start = D; } }
             }
             if(stb_c.finish.Equals(V1)) {
-                if(bordersSurf1) { InsertPointIntoCurvePts(nc, A); stb_c.finish = A; }
-                else if(bordersSurf2) { InsertPointIntoCurvePts(nc, D); stb_c.finish = D; }
-                if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A);
-                else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, D);
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_c.finish = A; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_c.finish = D; } }
             }
         }
-        // Detect gap direction: which endpoint (A or D) is the 'finish' of an existing trim?
-        // That tells us where the trim loop arrives, so the cap curve must depart from there.
-        bool capV1Backwards = false; // default: forward A->D
-        for(const STrimBy &stb_check : capSurf1->trim) {
-            if(stb_check.finish.Equals(D)) { capV1Backwards = true; break; }  // gap goes D->A
-            if(stb_check.finish.Equals(A)) { capV1Backwards = false; break; } // gap goes A->D
+        // Use graph traversal to find the actual gap endpoint in capSurf1.
+        // Sequential scan is unreliable when trims are stored out of connectivity
+        // order (insertion order from extrusion or prior chamfer).
+        bool capV1Backwards = false;
+        bool capV1GapBridgeable = false;
+        int  capV1GapIdx = -1;
+        {
+            int n = capSurf1->trim.n;
+            std::vector<bool> vis(n, false);
+            vis[0] = true;
+            Vector gStartPt = capSurf1->trim[0].start;
+            Vector gCur     = capSurf1->trim[0].finish;
+            int    gLast    = 0;
+            bool   gStuck   = false;
+            for(int iter = 1; iter < n; iter++) {
+                bool found = false;
+                for(int j = 0; j < n; j++) {
+                    if(vis[j]) continue;
+                    if(gCur.Equals(capSurf1->trim[j].start)) {
+                        gCur = capSurf1->trim[j].finish;
+                        gLast = j; vis[j] = true; found = true; break;
+                    }
+                }
+                if(!found) { gStuck = true; break; }
+            }
+            bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+            if(!gClosed) {
+                // gCur = chain endpoint (gapEnd); gLast = last visited index
+                if(gCur.Equals(A))      { capV1Backwards = false; capV1GapBridgeable = true; capV1GapIdx = gLast; }
+                else if(gCur.Equals(D)) { capV1Backwards = true;  capV1GapBridgeable = true; capV1GapIdx = gLast; }
+            }
         }
-        STrimBy stbCap1 = STrimBy::EntireCurve(this, hCapV1, capV1Backwards);
-        capSurf1->trim.Add(&stbCap1);
+        if(capV1GapBridgeable) {
+            STrimBy stbCap1 = STrimBy::EntireCurve(this, hCapV1, capV1Backwards);
+            InsertTrimAt(capSurf1, capV1GapIdx, &stbCap1);
+        }
     }
     if(hCapSurfV2 != hChamfer) {
         SSurface *capSurf2 = surface.FindById(hCapSurfV2);
@@ -543,26 +747,77 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
             bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
             if(stb_c.start.Equals(V2)) {
-                if(bordersSurf1) { InsertPointIntoCurvePts(nc, B); stb_c.start = B; }
-                else if(bordersSurf2) { InsertPointIntoCurvePts(nc, C); stb_c.start = C; }
-                if(bordersSurf1) TruncateCurveAtVertex(nc, V2, B);
-                else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, C);
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_c.start = B; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_c.start = C; } }
             }
             if(stb_c.finish.Equals(V2)) {
-                if(bordersSurf1) { InsertPointIntoCurvePts(nc, B); stb_c.finish = B; }
-                else if(bordersSurf2) { InsertPointIntoCurvePts(nc, C); stb_c.finish = C; }
-                if(bordersSurf1) TruncateCurveAtVertex(nc, V2, B);
-                else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, C);
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_c.finish = B; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_c.finish = C; } }
             }
         }
-        // Detect gap direction for V2 end: which endpoint (B or C) is the 'finish' of an existing trim?
-        bool capV2Backwards = false; // default: forward B->C
-        for(const STrimBy &stb_check : capSurf2->trim) {
-            if(stb_check.finish.Equals(C)) { capV2Backwards = true; break; }  // gap goes C->B
-            if(stb_check.finish.Equals(B)) { capV2Backwards = false; break; } // gap goes B->C
+        // Use graph traversal to find the actual gap endpoint in capSurf2.
+        // Sequential scan is unreliable when trims are stored out of connectivity order.
+        bool capV2Backwards = false;
+        bool capV2GapBridgeable = false;
+        int  capV2GapIdx = -1;
+        {
+            int n = capSurf2->trim.n;
+            std::vector<bool> vis(n, false);
+            vis[0] = true;
+            Vector gStartPt = capSurf2->trim[0].start;
+            Vector gCur     = capSurf2->trim[0].finish;
+            int    gLast    = 0;
+            bool   gStuck   = false;
+            for(int iter = 1; iter < n; iter++) {
+                bool found = false;
+                for(int j = 0; j < n; j++) {
+                    if(vis[j]) continue;
+                    if(gCur.Equals(capSurf2->trim[j].start)) {
+                        gCur = capSurf2->trim[j].finish;
+                        gLast = j; vis[j] = true; found = true; break;
+                    }
+                }
+                if(!found) { gStuck = true; break; }
+            }
+            bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+            if(!gClosed) {
+                if(gCur.Equals(B))      { capV2Backwards = false; capV2GapBridgeable = true; capV2GapIdx = gLast; }
+                else if(gCur.Equals(C)) { capV2Backwards = true;  capV2GapBridgeable = true; capV2GapIdx = gLast; }
+            }
         }
-        STrimBy stbCap2 = STrimBy::EntireCurve(this, hCapV2, capV2Backwards);
-        capSurf2->trim.Add(&stbCap2);
+        if(capV2GapBridgeable) {
+            STrimBy stbCap2 = STrimBy::EntireCurve(this, hCapV2, capV2Backwards);
+            InsertTrimAt(capSurf2, capV2GapIdx, &stbCap2);
+        }
+    }
+
+    // Bridge any remaining trim gaps in the surfaces we modified.
+    // These arise when InsertPointIntoCurvePts failed for a prior-chamfer cap edge
+    // (e.g., a diagonal curve from a previous chamfer), leaving an open trim loop.
+    // We use hChamfer as surfA so these bridge curves are consistently attributed.
+    // BridgeTrimGapIfOpen now verifies graph connectivity before bridging,
+    // so it is safe to call unconditionally on all potentially modified surfaces.
+    {
+        hSSurface toCheck[4] = { hSurf1, hSurf2, hCapSurfV1, hCapSurfV2 };
+        bool seen[4] = { false, false, false, false };
+        for(int ti = 0; ti < 4; ti++) {
+            if(toCheck[ti] == hChamfer) continue;
+            bool dup = false;
+            for(int tj = 0; tj < ti; tj++) { if(toCheck[tj] == toCheck[ti]) { dup = true; break; } }
+            if(dup) { seen[ti] = true; continue; }
+            seen[ti] = true;
+            BridgeTrimGapIfOpen(this, toCheck[ti], hChamfer);
+        }
+        // Also bridge any remaining gaps in OTHER surfaces not in our tracked set.
+        // This handles the case where hCapSurfV1 or hCapSurfV2 fell back to hChamfer
+        // (no real cap surface found), leaving a neighboring surface from a prior
+        // chamfer operation with an open trim polygon that was not tracked here.
+        for(SSurface &ss : surface) {
+            hSSurface h = ss.h;
+            if(h == hChamfer || h == hSurf1 || h == hSurf2 || h == hCapSurfV1 || h == hCapSurfV2) continue;
+            BridgeTrimGapIfOpen(this, h, hChamfer);
+        }
+        (void)seen;
     }
 
     // Step 14: remove old shared SCurve
@@ -903,22 +1158,14 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 SCurve *nc = curve.FindByIdNoOops(stb_n.curve);
                 if(!nc) continue;
                 if(stb_n.start.Equals(V1)) {
-                    InsertPointIntoCurvePts(nc, A0);
-                    TruncateCurveAtVertex(nc, V1, A0);
-                    stb_n.start = A0;
+                    if(InsertPointIntoCurvePts(nc, A0)) { TruncateCurveAtVertex(nc, V1, A0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A0); stb_n.start = A0; }
                 } else if(stb_n.start.Equals(V2)) {
-                    InsertPointIntoCurvePts(nc, A1);
-                    TruncateCurveAtVertex(nc, V2, A1);
-                    stb_n.start = A1;
+                    if(InsertPointIntoCurvePts(nc, A1)) { TruncateCurveAtVertex(nc, V2, A1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, A1); stb_n.start = A1; }
                 }
                 if(stb_n.finish.Equals(V1)) {
-                    InsertPointIntoCurvePts(nc, A0);
-                    TruncateCurveAtVertex(nc, V1, A0);
-                    stb_n.finish = A0;
+                    if(InsertPointIntoCurvePts(nc, A0)) { TruncateCurveAtVertex(nc, V1, A0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A0); stb_n.finish = A0; }
                 } else if(stb_n.finish.Equals(V2)) {
-                    InsertPointIntoCurvePts(nc, A1);
-                    TruncateCurveAtVertex(nc, V2, A1);
-                    stb_n.finish = A1;
+                    if(InsertPointIntoCurvePts(nc, A1)) { TruncateCurveAtVertex(nc, V2, A1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, A1); stb_n.finish = A1; }
                 }
             }
         }
@@ -955,22 +1202,14 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 SCurve *nc = curve.FindByIdNoOops(stb_n.curve);
                 if(!nc) continue;
                 if(stb_n.start.Equals(V1)) {
-                    InsertPointIntoCurvePts(nc, B0);
-                    TruncateCurveAtVertex(nc, V1, B0);
-                    stb_n.start = B0;
+                    if(InsertPointIntoCurvePts(nc, B0)) { TruncateCurveAtVertex(nc, V1, B0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, B0); stb_n.start = B0; }
                 } else if(stb_n.start.Equals(V2)) {
-                    InsertPointIntoCurvePts(nc, B1);
-                    TruncateCurveAtVertex(nc, V2, B1);
-                    stb_n.start = B1;
+                    if(InsertPointIntoCurvePts(nc, B1)) { TruncateCurveAtVertex(nc, V2, B1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B1); stb_n.start = B1; }
                 }
                 if(stb_n.finish.Equals(V1)) {
-                    InsertPointIntoCurvePts(nc, B0);
-                    TruncateCurveAtVertex(nc, V1, B0);
-                    stb_n.finish = B0;
+                    if(InsertPointIntoCurvePts(nc, B0)) { TruncateCurveAtVertex(nc, V1, B0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, B0); stb_n.finish = B0; }
                 } else if(stb_n.finish.Equals(V2)) {
-                    InsertPointIntoCurvePts(nc, B1);
-                    TruncateCurveAtVertex(nc, V2, B1);
-                    stb_n.finish = B1;
+                    if(InsertPointIntoCurvePts(nc, B1)) { TruncateCurveAtVertex(nc, V2, B1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B1); stb_n.finish = B1; }
                 }
             }
         }
@@ -985,58 +1224,129 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
             for(STrimBy &stb_c : capSurf1->trim) {
                 SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
                 if(!nc) continue;
-                bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
-                bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
-                if(stb_c.start.Equals(V1)) {
-                    if(bordersSurf1) { InsertPointIntoCurvePts(nc, A0); stb_c.start = A0; }
-                    else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B0); stb_c.start = B0; }
-                    if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A0);
-                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, B0);
-                }
-                if(stb_c.finish.Equals(V1)) {
-                    if(bordersSurf1) { InsertPointIntoCurvePts(nc, A0); stb_c.finish = A0; }
-                    else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B0); stb_c.finish = B0; }
-                    if(bordersSurf1) TruncateCurveAtVertex(nc, V1, A0);
-                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V1, B0);
-                }
+            bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
+            bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
+            if(stb_c.start.Equals(V1)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A0)) { TruncateCurveAtVertex(nc, V1, A0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A0); stb_c.start = A0; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, B0)) { TruncateCurveAtVertex(nc, V1, B0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, B0); stb_c.start = B0; } }
             }
-            // Detect gap direction for fillet V1 end: which endpoint (A0 or B0) is the 'finish'?
-            bool arcV1Backwards = false; // default: forward A0->B0
-            for(const STrimBy &stb_check : capSurf1->trim) {
-                if(stb_check.finish.Equals(B0)) { arcV1Backwards = true; break; }  // gap goes B0->A0
-                if(stb_check.finish.Equals(A0)) { arcV1Backwards = false; break; } // gap goes A0->B0
+            if(stb_c.finish.Equals(V1)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A0)) { TruncateCurveAtVertex(nc, V1, A0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A0); stb_c.finish = A0; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, B0)) { TruncateCurveAtVertex(nc, V1, B0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, B0); stb_c.finish = B0; } }
             }
-            STrimBy stbArc1 = STrimBy::EntireCurve(this, hArcV1, arcV1Backwards);
-            capSurf1->trim.Add(&stbArc1);
         }
-        if(hCapSurfV2 != hFillet) {
-            SSurface *capSurf2 = surface.FindById(hCapSurfV2);
-            for(STrimBy &stb_c : capSurf2->trim) {
-                SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
-                if(!nc) continue;
-                bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
-                bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
-                if(stb_c.start.Equals(V2)) {
-                    if(bordersSurf1) { InsertPointIntoCurvePts(nc, A1); stb_c.start = A1; }
-                    else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B1); stb_c.start = B1; }
-                    if(bordersSurf1) TruncateCurveAtVertex(nc, V2, A1);
-                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, B1);
+        // Use graph traversal to find the actual gap endpoint in capSurf1 for fillet.
+        // Sequential scan is unreliable when trims are stored out of connectivity order.
+        bool arcV1Backwards = false;
+        bool arcV1GapBridgeable = false;
+        int  arcV1GapIdx = -1;
+        {
+            int n = capSurf1->trim.n;
+            std::vector<bool> vis(n, false);
+            vis[0] = true;
+            Vector gStartPt = capSurf1->trim[0].start;
+            Vector gCur     = capSurf1->trim[0].finish;
+            int    gLast    = 0;
+            bool   gStuck   = false;
+            for(int iter = 1; iter < n; iter++) {
+                bool found = false;
+                for(int j = 0; j < n; j++) {
+                    if(vis[j]) continue;
+                    if(gCur.Equals(capSurf1->trim[j].start)) {
+                        gCur = capSurf1->trim[j].finish;
+                        gLast = j; vis[j] = true; found = true; break;
+                    }
                 }
-                if(stb_c.finish.Equals(V2)) {
-                    if(bordersSurf1) { InsertPointIntoCurvePts(nc, A1); stb_c.finish = A1; }
-                    else if(bordersSurf2) { InsertPointIntoCurvePts(nc, B1); stb_c.finish = B1; }
-                    if(bordersSurf1) TruncateCurveAtVertex(nc, V2, A1);
-                    else if(bordersSurf2) TruncateCurveAtVertex(nc, V2, B1);
+                if(!found) { gStuck = true; break; }
+            }
+            bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+            if(!gClosed) {
+                if(gCur.Equals(A0))      { arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+                else if(gCur.Equals(B0)) { arcV1Backwards = true;  arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+            }
+        }
+        if(arcV1GapBridgeable) {
+            STrimBy stbArc1 = STrimBy::EntireCurve(this, hArcV1, arcV1Backwards);
+            InsertTrimAt(capSurf1, arcV1GapIdx, &stbArc1);
+        }
+    }
+    if(hCapSurfV2 != hFillet) {
+        SSurface *capSurf2 = surface.FindById(hCapSurfV2);
+        for(STrimBy &stb_c : capSurf2->trim) {
+            SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
+            if(!nc) continue;
+            bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
+            bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
+            if(stb_c.start.Equals(V2)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A1)) { TruncateCurveAtVertex(nc, V2, A1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, A1); stb_c.start = A1; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, B1)) { TruncateCurveAtVertex(nc, V2, B1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B1); stb_c.start = B1; } }
+            }
+            if(stb_c.finish.Equals(V2)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A1)) { TruncateCurveAtVertex(nc, V2, A1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, A1); stb_c.finish = A1; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, B1)) { TruncateCurveAtVertex(nc, V2, B1); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B1); stb_c.finish = B1; } }
+            }
+        }
+            // Use graph traversal to find the actual gap endpoint in capSurf2 for fillet.
+            // Sequential scan is unreliable when trims are stored out of connectivity order.
+            bool arcV2Backwards = false;
+            bool arcV2GapBridgeable = false;
+            int  arcV2GapIdx = -1;
+            {
+                int n = capSurf2->trim.n;
+                std::vector<bool> vis(n, false);
+                vis[0] = true;
+                Vector gStartPt = capSurf2->trim[0].start;
+                Vector gCur     = capSurf2->trim[0].finish;
+                int    gLast    = 0;
+                bool   gStuck   = false;
+                for(int iter = 1; iter < n; iter++) {
+                    bool found = false;
+                    for(int j = 0; j < n; j++) {
+                        if(vis[j]) continue;
+                        if(gCur.Equals(capSurf2->trim[j].start)) {
+                            gCur = capSurf2->trim[j].finish;
+                            gLast = j; vis[j] = true; found = true; break;
+                        }
+                    }
+                    if(!found) { gStuck = true; break; }
+                }
+                bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+                if(!gClosed) {
+                    if(gCur.Equals(A1))      { arcV2Backwards = false; arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
+                    else if(gCur.Equals(B1)) { arcV2Backwards = true;  arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
                 }
             }
-            // Detect gap direction for fillet V2 end: which endpoint (A1 or B1) is the 'finish'?
-            bool arcV2Backwards = false; // default: forward A1->B1
-            for(const STrimBy &stb_check : capSurf2->trim) {
-                if(stb_check.finish.Equals(B1)) { arcV2Backwards = true; break; }  // gap goes B1->A1
-                if(stb_check.finish.Equals(A1)) { arcV2Backwards = false; break; } // gap goes A1->B1
+            if(arcV2GapBridgeable) {
+                STrimBy stbArc2 = STrimBy::EntireCurve(this, hArcV2, arcV2Backwards);
+                InsertTrimAt(capSurf2, arcV2GapIdx, &stbArc2);
             }
-            STrimBy stbArc2 = STrimBy::EntireCurve(this, hArcV2, arcV2Backwards);
-            capSurf2->trim.Add(&stbArc2);
+        }
+
+        // Bridge any remaining trim gaps in the surfaces we modified for fillet.
+        // Same logic as for chamfer: when InsertPointIntoCurvePts fails for a prior-fillet
+        // cap edge (diagonal arc curve), the trim polygon is left open. Bridge the gap.
+        // BridgeTrimGapIfOpen verifies graph connectivity before bridging.
+        {
+            hSSurface toCheck[4] = { hSurf1, hSurf2, hCapSurfV1, hCapSurfV2 };
+            bool seen[4] = { false, false, false, false };
+            for(int ti = 0; ti < 4; ti++) {
+                if(toCheck[ti] == hFillet) continue;
+                bool dup = false;
+                for(int tj = 0; tj < ti; tj++) { if(toCheck[tj] == toCheck[ti]) { dup = true; break; } }
+                if(dup) { seen[ti] = true; continue; }
+                seen[ti] = true;
+                BridgeTrimGapIfOpen(this, toCheck[ti], hFillet);
+            }
+            // Also bridge any remaining gaps in OTHER surfaces not in our tracked set.
+            // This handles the case where hCapSurfV1 or hCapSurfV2 fell back to hFillet
+            // (no real cap surface found), leaving a neighboring surface from a prior
+            // fillet operation with an open trim polygon that was not tracked here.
+            for(SSurface &ss : surface) {
+                hSSurface h = ss.h;
+                if(h == hFillet || h == hSurf1 || h == hSurf2 || h == hCapSurfV1 || h == hCapSurfV2) continue;
+                BridgeTrimGapIfOpen(this, h, hFillet);
+            }
+            (void)seen;
         }
 
         // Safety: verify no surface trim still references hSharedSC before removing.

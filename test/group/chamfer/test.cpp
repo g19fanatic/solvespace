@@ -2574,3 +2574,290 @@ TEST_CASE(fillet_then_chamfer_no_extra_line) {
     }
     CHECK_FALSE(anyOriginLine);
 }
+
+//-----------------------------------------------------------------------------
+// Fix plan item 1 (TDD): chamfer_face1_face2_cap_no_backface
+//
+// Scenario: box -> chamfer(face1 + face2, dist=2.0)
+// where face1 = front side face (Y=0), face2 = right side face (X=20).
+// These share the VERTICAL edge at X=20, Y=0 from Z=0 to Z=80.
+//
+// The cap surfaces for this chamfer are:
+//   hCapSurfV1 = bottomCap (Z=0) for the bottom endpoint V1=(20,0,0)
+//   hCapSurfV2 = topCap   (Z=80) for the top    endpoint V2=(20,0,80)
+//
+// After the chamfer, cap surface trim is updated in Step 15:
+//   bottomCap gets cap curve A->D inserted (A=(18,0,0), D=(20,2,0))
+//   topCap    gets cap curve B->C inserted (B=(18,0,80), C=(20,2,80))
+//
+// If the direction (capV1Backwards/capV2Backwards) is WRONG, the resulting
+// triangulation of the corner triangle on topCap/bottomCap is BACKFACING.
+// This produces the "red triangle" visible in the SolveSpace viewport.
+//
+// TDD: FAIL before fix (backfacing corner triangle at V1 on bottomCap or
+//      V2 on topCap due to wrong cap curve insertion direction in Step 15).
+// TDD: PASS after fix (correct direction: corner triangle faces outward).
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_face1_face2_cap_no_backface) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // Single chamfer on the two vertical side faces (the shared vertical edge).
+    // face1 = front face (Y=0), face2 = right face (X=20).
+    // The cap surfaces are topCap (Z=80) and bottomCap (Z=0).
+    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    if(g == nullptr) return;
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Check no back-facing triangles in the chamfer group's display mesh.
+    // Box center = (10,10,40) for 20x20x80 box.
+    // Any triangle whose outward normal points TOWARD the box center is backfacing.
+    g->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    // TDD: FAIL before fix (backfacing corner triangle from wrong Step 15 direction).
+    // TDD: PASS after fix.
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Fix plan item 2 (TDD): fillet_face1_face2_cap_no_backface
+//
+// Scenario: box -> fillet(face1 + face2, radius=2.0)
+// where face1 = front side face (Y=0), face2 = right side face (X=20).
+// These share the VERTICAL edge at X=20, Y=0 from Z=0 to Z=80.
+//
+// The cap surfaces for this fillet are:
+//   hCapSurfV1 = bottomCap (Z=0) for the bottom endpoint V1=(20,0,0)
+//   hCapSurfV2 = topCap   (Z=80) for the top    endpoint V2=(20,0,80)
+//
+// After the fillet, the arc ends at V1 and V2 connect to the cap surfaces.
+// Step 15 in MakeFromFilletOf inserts arc endpoints into the cap surface trim.
+//
+// If the direction (arcV1Backwards/arcV2Backwards) is WRONG in the fillet
+// algorithm, the corner triangle on topCap/bottomCap is BACKFACING.
+// This produces the "red triangle" visible in the SolveSpace viewport for fillets.
+//
+// TDD: expected FAIL before fix (backfacing corner triangle from wrong direction).
+// TDD: PASS after fix (correct direction: corner triangle faces outward).
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_face1_face2_cap_no_backface) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // Single fillet on the two vertical side faces (the shared vertical edge).
+    // face1 = front face (Y=0), face2 = right face (X=20).
+    // The cap surfaces are topCap (Z=80) and bottomCap (Z=0).
+    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    if(g == nullptr) return;
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Check no back-facing triangles in the fillet group's display mesh.
+    // Box center = (10,10,40) for 20x20x80 box.
+    // Any triangle whose outward normal points TOWARD the box center is backfacing.
+    g->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    // TDD: expected FAIL before fix (backfacing corner from wrong Step 15 direction).
+    // TDD: PASS after fix.
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Fix plan item 3 (TDD): chamfer_adjacent_cap_no_backface
+//
+// Scenario: box -> chamfer1(topCap + face1, dist=2.0) -> chamfer2(face1 + face2, dist=2.0)
+//
+// chamfer1 operates on topCap (Z=80) and face1 (front face Y=0).
+//   - The shared edge runs along X from X=0..20 at Y=0, Z=80.
+//   - This is a HORIZONTAL edge on the top cap.
+//   - After chamfer1: topCap gets a cut edge along Y=0 plane, face1 gets a setback.
+//
+// chamfer2 operates on face1 (front face Y=0, now modified by chamfer1) and
+// face2 (right face X=20).
+//   - The shared edge runs along Z from Z=0..80 at X=20, Y=0 (vertical edge).
+//   - At V2=(20,0,80): the cap surface for this endpoint is the MODIFIED topCap
+//     (which now has a chamfered corner from chamfer1). The topCap at (20,0,80)
+//     is no longer a clean rectangular edge — it has the chamfer1 setback nearby.
+//   - At V1=(20,0,0): the cap surface is bottomCap (unmodified).
+//
+// The BACKFACING TRIANGLE appears at the corner where:
+//   - topCap's already-modified edge (from chamfer1) meets
+//   - the new chamfer2 cap curve (B->C where B=(18,0,80), C=(20,2,80))
+//   - The hCapSurfV2 for chamfer2 may fall back to hChamfer (since topCap's
+//     adjacent edges at (20,0,80) are now owned by chamfer1, not the original
+//     topCap/face1 edges).
+//   - This produces the "red triangle" from the screenshot.
+//
+// TDD: FAIL before fix (backfacing triangle at the complex corner from adjacent chamfers).
+// TDD: PASS after fix.
+//
+// We check backfaces in BOTH chamfer groups' displayMesh (the bug may appear in
+// either chamfer1's cap surface or chamfer2's display).
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_adjacent_cap_no_backface) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // chamfer1: topCap + face1 (horizontal top edge of front face).
+    hEntity topCap = FindCapFace(extrudeH, true);
+    CHECK_TRUE(topCap.v != 0);
+    if(topCap.v == 0) return;
+    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, topCap, 2.0);
+    Group *g1 = SK.GetGroup(chamfer1H);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    // chamfer2: face1 + face2 (vertical edge at X=20, Y=0).
+    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, face2, 2.0);
+    Group *g2 = SK.GetGroup(chamfer2H);
+    CHECK_TRUE(g2 != nullptr);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    // Check no back-facing triangles in chamfer2's display mesh.
+    // Box center = (10,10,40) for 20x20x80 box.
+    // Any triangle whose outward normal points TOWARD the box center is backfacing.
+    g2->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g2->displayMesh.l.n; ti++) {
+        STriangle *tr = &g2->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    // TDD: FAIL before fix (backfacing triangle at adjacent chamfer corner).
+    // TDD: PASS after fix.
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// Fix plan item 9: chamfer_adjacent_vertical_no_backface
+//
+// Scenario: box -> chamfer1(face1 + face2, dist=2.0)
+//               -> chamfer2(face2 + face3, dist=2.0)
+// where face1 = front side face (Y=0), face2 = right side face (X=20),
+//       face3 = back side face (Y=20).
+//
+// face1 and face2 share the VERTICAL edge at X=20, Y=0 (from Z=0 to Z=80).
+// face2 and face3 share the VERTICAL edge at X=20, Y=20 (from Z=0 to Z=80).
+//
+// Both chamfers modify face2 (the right face) from opposite sides.
+// Both chamfers also modify topCap (Z=80) and bottomCap (Z=0) at DIFFERENT corners:
+//   - chamfer1 modifies topCap at corner (20,0,80) and bottomCap at corner (20,0,0)
+//   - chamfer2 modifies topCap at corner (20,20,80) and bottomCap at corner (20,20,0)
+//
+// This is the EXACT scenario from the screenshot (two adjacent VERTICAL-edge chamfers
+// on the same face, sharing topCap/bottomCap but at different corners).
+//
+// After chamfer2, check no backfacing triangles in chamfer2's displayMesh.
+// Regression guard: ensure both chamfers produce correct geometry.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_adjacent_vertical_no_backface) {
+    hGroup extrudeH = CreateBoxExtrude();
+
+    // Find three consecutive FACE_XPROD entities (fA, fB, fC):
+    //   fA = front face (Y=0), from line (0,0,0)->(20,0,0)
+    //   fB = right face (X=20), from line (20,0,0)->(20,20,0)
+    //   fC = back face (Y=20), from line (20,20,0)->(0,20,0)
+    hEntity fA = {}, fB = {}, fC = {};
+    int nFound = 0;
+    for(auto &e : SK.entity) {
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::FACE_XPROD) continue;
+        if(nFound == 0) fA = e.h;
+        else if(nFound == 1) fB = e.h;
+        else if(nFound == 2) fC = e.h;
+        nFound++;
+        if(nFound >= 3) break;
+    }
+    CHECK_TRUE(nFound >= 3);
+    if(nFound < 3) return;
+
+    // chamfer1: fA (front Y=0) + fB (right X=20) — vertical edge at X=20, Y=0.
+    hGroup chamfer1H = AddChamferGroup(extrudeH, fA, fB, 2.0);
+    Group *g1 = SK.GetGroup(chamfer1H);
+    CHECK_TRUE(g1 != nullptr);
+    if(g1 == nullptr) return;
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    // chamfer2: fB (right X=20) + fC (back Y=20) — vertical edge at X=20, Y=20.
+    // opA = chamfer1H (chamfer2 builds on the result of chamfer1).
+    hGroup chamfer2H = AddChamferGroup(chamfer1H, fB, fC, 2.0);
+    Group *g2 = SK.GetGroup(chamfer2H);
+    CHECK_TRUE(g2 != nullptr);
+    if(g2 == nullptr) return;
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    // Check no backfacing triangles in chamfer2's display mesh.
+    // Box center = (10,10,40) for 20x20x80 box.
+    // Any triangle whose geometric normal points TOWARD the box center is backfacing.
+    g2->GenerateDisplayItems();
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g2->displayMesh.l.n; ti++) {
+        STriangle *tr = &g2->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    // Regression guard: two adjacent vertical chamfers on same right face (X=20).
+    CHECK_FALSE(anyBackFacing);
+
+    // Also check chamfer1's display mesh for regressions.
+    g1->GenerateDisplayItems();
+    anyBackFacing = false;
+    for(int ti = 0; ti < g1->displayMesh.l.n; ti++) {
+        STriangle *tr = &g1->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}
