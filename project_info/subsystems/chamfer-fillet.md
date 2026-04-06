@@ -1,8 +1,8 @@
 # Chamfer & Fillet Subsystem
 
 > **Purpose**: Deep-dive reference for the CHAMFER (5400) and FILLET (5401) group types —
-> new solid-modeling operations that bevel or round an edge between two selected flat faces
-> via direct topology injection.
+> solid-modeling operations that bevel or round an edge between two selected flat faces
+> via direct topology injection. **Status**: Feature complete with extensive test coverage.
 >
 > **Cross-references**: [architecture.md](../architecture.md) | [sketch.md](sketch.md) |
 > [../code-patterns.md](../code-patterns.md) | [../context-strategy.md](../context-strategy.md)
@@ -17,7 +17,7 @@ union/difference pipeline. Instead they use **direct topology injection**: the s
 shell is deep-copied and then surgically modified so that the shared edge between two
 user-selected faces is replaced by a new flat (chamfer) or arc (fillet) surface.
 
-**New source file**: `src/srf/chamfer.cpp` (~960 lines)  
+**Source file**: `src/srf/chamfer.cpp` (1366 lines — expanded with new repair helpers)  
 **Core methods**: `SShell::MakeFromChamferOf()`, `SShell::MakeFromFilletOf()`
 
 ---
@@ -104,6 +104,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist);
 | 13 | Update surf2 trims: replace hShared with hCurve2; update neighbor endpoints V1→D, V2→C | `chamfer.cpp:~410` |
 | 14 | Remove old shared SCurve via tag+`RemoveTagged()` | `chamfer.cpp:~440` |
 | 15 | Update cap surface trims at V1 (hCapSurf1) and V2 (hCapSurf2): patch neighbor endpoints and add new cap curve to trim polygon | `chamfer.cpp:449-510` |
+| Post-15 | `BridgeTrimGapIfOpen` sweep: for all modified/neighbor surfaces, close any residual open trim loops via graph traversal | `chamfer.cpp:795-818` |
 
 ### Step 15 Detail: Cap Surface Trim Update
 
@@ -135,11 +136,12 @@ The `backwards` flag for the new cap curve (`EntireCurve(this, hCapV1, backwards
 is detected dynamically by checking which cap trim entries have their `finish` at V1
 (if finish == V1 → backwards=true, meaning the new curve runs from A to D backwards).
 
-**Key locations**:
-- Chamfer capSurf1 (V1 end): `chamfer.cpp:449-472`
-- Chamfer capSurf2 (V2 end): `chamfer.cpp:475-497`
-- Fillet capSurf1 (V1 end): `chamfer.cpp:902-920`
-- Fillet capSurf2 (V2 end): `chamfer.cpp:923-940`
+**Key locations** (updated for 1366-line file):
+- Chamfer `InsertTrimAt` for capSurf1: `chamfer.cpp:739`
+- Chamfer `InsertTrimAt` for capSurf2: `chamfer.cpp:790`
+- Fillet `InsertTrimAt` for capSurf1: `chamfer.cpp:1270`
+- Fillet `InsertTrimAt` for capSurf2: `chamfer.cpp:~1320`
+- Post-loop `BridgeTrimGapIfOpen` sweep: `chamfer.cpp:795-818` (chamfer), `chamfer.cpp:~1340-1365` (fillet)
 
 ---
 
@@ -159,11 +161,11 @@ Same 15-step flow as chamfer but:
 - **Step 11**: Trim polygon uses arc boundary curves instead of straight lines
 - **Step 15**: Cap updates use A0/B0 for capSurf1 and A1/B1 for capSurf2
 
-**Key locations** (fillet section starts ~line 600 in chamfer.cpp):
-- Fillet corner computation: `chamfer.cpp:~640-700`
-- Fillet surface creation: `chamfer.cpp:~710`
-- Fillet cap surface detection: `chamfer.cpp:776-828`
-- Fillet Step 15 (cap updates): `chamfer.cpp:895-945`
+**Key locations** (fillet section starts ~line 849 in chamfer.cpp):
+- `SShell::MakeFromFilletOf` entry: `chamfer.cpp:849`
+- Fillet corner computation: `chamfer.cpp:~900-1000`
+- Fillet surface creation: `chamfer.cpp:~1010`
+- Fillet Step 15 (cap updates): `chamfer.cpp:~1240-1330`
 
 ---
 
@@ -200,16 +202,25 @@ REMAP_FILLET_FACE  = 1012,  // generates fillet face entity
 
 ## Helper Functions
 
-### `InsertPointIntoCurvePts(SCurve *sc, Vector P)`  
+### `InsertPointIntoCurvePts(SCurve *sc, Vector P)` — `chamfer.cpp:18`
 **Location**: `src/srf/chamfer.cpp:19-63`
 
 Inserts a new vertex point P into a curve's `pts` list at the segment that geometrically
 contains P. Used to split a curve when a chamfer setback point lies on it (Steps 12, 13, 15).
 
 Returns `true` if P was inserted or already present. No-op if P doesn't lie on any segment.
+**Important**: Callers must check the return value — if `false`, the subsequent
+`TruncateCurveAtVertex` and `UpdateAllSurfaceTrimEndpoints` calls must be skipped.
 
-### `AddLinearCurve(SShell *shell, Vector from, Vector to, hSSurface surfA, hSSurface surfB)`  
+### `TruncateCurveAtVertex(SCurve *sc, Vector oldEnd, Vector newEnd)` — `chamfer.cpp:71`
 **Location**: `src/srf/chamfer.cpp:66-79`
+
+Removes all pts from sc that are beyond `oldEnd` (i.e., past the new setback point `newEnd`).
+Called immediately after `InsertPointIntoCurvePts` to trim the stale original corner from
+the curve's point list. Precondition: `newEnd` is already in `sc->pts`.
+
+### `AddLinearCurve(SShell *shell, Vector from, Vector to, hSSurface surfA, hSSurface surfB)` — `chamfer.cpp:99`
+**Location**: `src/srf/chamfer.cpp:99-112`
 
 Creates a new straight-line `SCurve` between two points, assigns `surfA`/`surfB`, populates
 `pts` via `SBezier::MakePwlInto()`, and inserts it into the shell with a new handle.
@@ -242,7 +253,7 @@ Used to create hCurve1, hCurve2, hCapV1, hCapV2 in Steps 10+.
 | `src/textscreens.cpp:948-985` | `EditControl` handler: `CHAMFER_OFFSET` → updates `h.param(0)` |
 | `src/srf/boolean.cpp:750-752` | Defensive `surfA.v != 0 && surfB.v != 0` guard |
 | `src/draw.cpp:28,45,55` | `FindByIdNoOops` guards in `Selection::Draw` / `HasEndpoints` |
-| `test/group/chamfer/test.cpp` | 12+ programmatic tests (basic, mesh, self-intersection, chaining) |
+| `test/group/chamfer/test.cpp` | **63 programmatic tests** covering basic, mesh, chaining, stale-vertex, backface, origin-line regression (2863 lines) |
 | `test/group/chamfer/chaining_test.slvs` | `.slvs` file with fillet + 2 chamfers on same face |
 | `test/CMakeLists.txt:68` | Test source entry |
 | `src/CMakeLists.txt` | `srf/chamfer.cpp` added to source list |
@@ -273,27 +284,79 @@ match face handles from different sub-shells with no shared curves between them.
 
 ---
 
+## Test Coverage Summary
+
+`test/group/chamfer/test.cpp` — **63 TEST_CASEs**, 2863 lines, 0 failures as of f854b536.
+
+### Helper functions (top of test.cpp)
+
+| Function | Line | Purpose |
+|----------|------|---------|
+| `CreateBoxExtrude()` | `28` | Creates a standard 20×20×20 box via extrude, returns `hGroup` |
+| `FindTwoAdjacentFaces(hGroup, ...)` | `109` | Finds two adjacent planar faces sharing an edge |
+| `FindCapFace(hGroup, bool wantTop)` | `128` | Finds top or bottom cap face of extrude group |
+| `AddChamferGroup(hGroup, ...)` | `146` | Adds a CHAMFER group to the sketch, runs GenerateAll |
+| `AddFilletGroup(hGroup, ...)` | `172` | Adds a FILLET group to the sketch, runs GenerateAll |
+| `CountLineSegmentsInGroup(hGroup, bool visibleOnly)` | `1695` | Counts LINE_SEGMENT entities in a group |
+| `CountLineSegmentsWithOriginEndpoint(bool skipHidden)` | `1707` | Counts lines with an endpoint at (0,0,0) — origin-line bug detector |
+
+### Test categories
+
+| Category | Test names (prefix) | Count |
+|----------|---------------------|-------|
+| Basic crash / boolean / mesh | `chamfer_basic_*`, `fillet_basic_*` | 6 |
+| Geometry quality | `chamfer_no_self_intersection`, `chamfer_shell_has_surfaces`, etc. | 6 |
+| Edge cases | `chamfer_edge_case_small_dist`, `chamfer_edge_case_large_dist` | 2 |
+| Chaining | `chamfer_chaining_no_boolean_fail` | 1 |
+| Face order invariance | `chamfer_face_order_forward/invariant`, `fillet_face_order_*` | 4 |
+| Stale vertex / setback | `chamfer_no_stale_vertices`, `chamfer_setback_*`, `fillet_setback_*` | 8 |
+| Curve/surface wiring | `chamfer_new_curves_have_correct_surface_associations` | 1 |
+| Count checks | `chamfer_curve_count_correct`, `fillet_curve_count_correct` | 2 |
+| Face entity / hide | `chamfer_group_has_face_entity`, `chamfer_original_vertices_hidden`, etc. | 10 |
+| Edge/entity existence | `chamfer_edges_should_exist_as_entities`, `chamfer_has_line_segment_entities`, etc. | 6 |
+| Backface regression | `chamfer_side_top_cap_no_backface`, `fillet_side_top_cap_no_backface`, `chamfer_face1_face2_cap_no_backface`, `fillet_face1_face2_cap_no_backface`, `chamfer_adjacent_cap_no_backface`, `chamfer_adjacent_vertical_no_backface` | 6 |
+| Cap edge hide | `chamfer_cap_edges_hidden`, `fillet_cap_edges_hidden`, `fillet_original_edge_hidden` | 3 |
+| Chained origin-line regressions | `chamfer_chained_no_null_point_handles`, `chamfer_chained_no_origin_line`, `chamfer_chained_no_null_endpoint_handles`, `chamfer_second_visible_line_count`, `chamfer_line_endpoints_valid`, `chamfer_chained_total_visible_lines`, `chamfer_chained_offset_from_origin`, `chamfer_three_chained` | 8 |
+| Fillet chaining | `fillet_chained_no_origin_line`, `fillet_chained_no_null_endpoints` | 2 |
+| Offset / size edge cases | `chamfer_minimal_offset_no_extra_line`, `chamfer_large_offset_no_extra_line` | 2 |
+| Diagnostic / mixed | `chamfer_chained_diagnostic_no_visible_origin_line`, `chamfer_two_side_faces_no_extra_line`, `chamfer_then_fillet_no_extra_line`, `fillet_then_chamfer_no_extra_line` | 4 |
+
+### Origin-line regression (chained chamfer bug)
+
+A key bug class discovered during development: chained chamfers could produce a spurious
+`LINE_SEGMENT` entity with one endpoint at `(0,0,0)` (the origin). This was caused by
+null/uninitialized `hEntity` handles on LINE_SEGMENT point entities in the chamfer group.
+
+**Detection**: `CountLineSegmentsWithOriginEndpoint(skipHidden=true)` > 0  
+**Regression tests**: `chamfer_chained_no_origin_line` (line 1775), `chamfer_chained_diagnostic_no_visible_origin_line` (line 2391), and 6+ more.
+
+### Backface regression
+
+Cap surfaces (top/bottom faces at edge endpoints) could produce triangles facing inward
+(backfacing) when the trim polygon had an open gap. Fixed by `BridgeTrimGapIfOpen` + `InsertTrimAt`.
+
+**Detection**: `normal.Dot(centroid - boxCenter) < -0.01` (camera-independent backface check)  
+**Regression tests**: `chamfer_side_top_cap_no_backface` (line 1498), `chamfer_face1_face2_cap_no_backface` (line 2601), `chamfer_adjacent_cap_no_backface` (line 2728), `chamfer_adjacent_vertical_no_backface` (line 2794).
+
+---
+
 ## Debug Instrumentation
 
 During development, 190+ `CHAMFER_DEBUG` logging lines were added across 7 files:
 `chamfer.cpp`, `boolean.cpp`, `surface.cpp`, `groupmesh.cpp`, `group.cpp`,
 `textscreens.cpp`, `draw.cpp`.
 
-Strip command (run from project root once debugging is complete):
-```sh
-for f in src/srf/chamfer.cpp src/srf/boolean.cpp src/srf/surface.cpp \
-          src/groupmesh.cpp src/group.cpp src/textscreens.cpp src/draw.cpp; do
-    sed -i '/CHAMFER_DEBUG/d' "$f"
-done
-```
+**Current status**: All `CHAMFER_DEBUG` lines have been stripped (0 remaining in chamfer.cpp,
+0 in boolean.cpp). The strip was completed as part of the feature stabilization. No further
+action needed.
 
 ---
 
 ## Build Notes
 
-- `src/CMakeLists.txt`: `srf/chamfer.cpp` added to `solvespace_core` source list
+- `src/CMakeLists.txt`: `srf/chamfer.cpp` in `solvespace_core` source list
 - Build: `cmake --build build/ -j$(nproc)`
-- Tests: `ctest --test-dir build/ -R chamfer --output-on-failure`
+- Tests: `ctest --test-dir build/ -R chamfer --output-on-failure` (**63 tests, 0 failures**)
 - The chamfer/fillet feature requires `ENABLE_TESTS=ON` for the test suite
 
 See `project_info/build-notes.md` for GUI startup issues on Ubuntu 22.04.

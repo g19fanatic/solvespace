@@ -141,17 +141,11 @@ task-specific files.
 | `src/srf/surface.h` | `432–436` | `MakeFromChamferOf` / `MakeFromFilletOf` declarations; `int tag` on `SCurve` |
 | `src/textscreens.cpp` | `488–517`, `948–985` | `ShowGroupInfo` CHAMFER/FILLET panels; edit control handlers |
 | `src/ui.h` | `157–161`, `372–378`, `512–513` | `Command::GROUP_CHAMFER/FILLET`; `Edit::CHAMFER_OFFSET/FILLET_RADIUS` |
-| `test/group/chamfer/test.cpp` | full | 12+ programmatic tests; chaining test; edge-case tests |
+| `test/group/chamfer/test.cpp` | full (2863 lines) | **63 tests**: basic, mesh, chaining, stale-vertex, backface, origin-line regression |
 
-**Key subsystem doc**: `project_info/subsystems/chamfer-fillet.md` — full 15-step algorithm, data structures, ASSEMBLE-skip design rationale, cap trim logic, debug strip command.
+**Key subsystem doc**: `project_info/subsystems/chamfer-fillet.md` — full 15-step algorithm, 7 helper functions, 63-test coverage summary, ASSEMBLE-skip design rationale, backface/origin-line regression notes.
 
-**Debug note**: 190+ `CHAMFER_DEBUG` lines exist across 7 files. Strip with:
-```sh
-for f in src/srf/chamfer.cpp src/srf/boolean.cpp src/srf/surface.cpp \
-          src/groupmesh.cpp src/group.cpp src/textscreens.cpp src/draw.cpp; do
-    sed -i '/CHAMFER_DEBUG/d' "$f"
-done
-```
+**Debug note**: All `CHAMFER_DEBUG` lines have been stripped (0 remaining). No action needed.
 
 ---
 
