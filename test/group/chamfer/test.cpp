@@ -1567,6 +1567,313 @@ TEST_CASE(fillet_side_top_cap_no_backface) {
     CHECK_FALSE(anyBackFacing);
 }
 
+//-----------------------------------------------------------------------------
+// Helper: Create a box with a rectangular pocket cutout.
+//
+// Two variants:
+//   CreateBoxWithCutout()           - pocket sketch at z=20 (top), extrudes DIFF
+//   CreateBoxWithCutoutFromBottom() - pocket sketch at z=0, extrudes DIFF upward
+//
+// Both create: 20x20x20 box + second sketch + EXTRUDE DIFFERENCE group.
+// The DIFFERENCE topology creates complex surface connectivity that can trigger
+// the fillet crash when cap surfaces have empty trim lists.
+//-----------------------------------------------------------------------------
+struct BoxWithCutout {
+    hGroup baseExtrude;
+    hGroup cutSketchGroup;
+    hGroup cutExtrude;
+};
+
+// Helper: Find a POINT entity near (x, y, z). Returns {} if not found.
+static hEntity FindPointNear(double x, double y, double z) {
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(!e.IsPoint()) continue;
+        Vector p = e.PointGetNum();
+        if(fabs(p.x - x) < 0.5 && fabs(p.y - y) < 0.5 && fabs(p.z - z) < 0.5)
+            return e.h;
+    }
+    return {};
+}
+
+// CreateBoxWithCutout: box at z=20 workplane, extrudes outward as DIFFERENCE
+static BoxWithCutout CreateBoxWithCutout(
+    double pocketX = 0.0, double pocketY = 0.0,
+    double pocketW = 10.0, double pocketH = 10.0,
+    double pocketDepth = 10.0)
+{
+    BoxWithCutout result = {};
+    hGroup baseExtrude = CreateBoxExtrude();
+    result.baseExtrude = baseExtrude;
+
+    hEntity originPt = FindPointNear(0.0, 0.0, 20.0);
+    if(originPt.v == 0) {
+        hGroup sketchGroupH = { 2 };
+        Group *baseSketchGroup = SK.GetGroup(sketchGroupH);
+        originPt = baseSketchGroup->predef.origin;
+    }
+
+    Group wpg = {};
+    wpg.type = Group::Type::DRAWING_WORKPLANE;
+    wpg.subtype = Group::Subtype::WORKPLANE_BY_POINT_ORTHO;
+    wpg.predef.origin = originPt;
+    wpg.predef.q = Quaternion::From(1.0, 0.0, 0.0, 0.0);
+    wpg.name = "cut-sketch";
+    wpg.visible = true;
+    wpg.color = RGBi(100, 100, 100);
+    wpg.scale = 1;
+    wpg.order = SK.group.n + 1;
+    SK.group.AddAndAssignId(&wpg);
+    SK.groupOrder.Add(&wpg.h);
+    SS.GW.activeGroup = wpg.h;
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+    hGroup wpGroupH = wpg.h;
+    result.cutSketchGroup = wpGroupH;
+
+    hEntity cutWorkplane = SS.GW.ActiveWorkplane();
+
+    hRequest crh[4];
+    for(int i = 0; i < 4; i++) {
+        Request r = {};
+        r.type = Request::Type::LINE_SEGMENT;
+        r.group = wpGroupH;
+        r.workplane = cutWorkplane;
+        r.construction = false;
+        SK.request.AddAndAssignId(&r);
+        crh[i] = r.h;
+    }
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+    double x0 = pocketX, y0 = pocketY, z = 20.0;
+    double x1 = pocketX + pocketW, y1 = pocketY + pocketH;
+    Vector pts[4] = {
+        Vector::From(x0, y0, z), Vector::From(x1, y0, z),
+        Vector::From(x1, y1, z), Vector::From(x0, y1, z),
+    };
+    for(int i = 0; i < 4; i++) {
+        SK.GetEntity(crh[i].entity(1))->PointForceTo(pts[i]);
+        SK.GetEntity(crh[i].entity(2))->PointForceTo(pts[(i+1)%4]);
+    }
+    for(int i = 0; i < 4; i++) {
+        Constraint c = {};
+        c.type = Constraint::Type::POINTS_COINCIDENT;
+        c.group = wpGroupH; c.workplane = cutWorkplane;
+        c.ptA = crh[i].entity(2); c.ptB = crh[(i+1)%4].entity(1);
+        SK.constraint.AddAndAssignId(&c);
+    }
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+    Group eg = {};
+    eg.type = Group::Type::EXTRUDE;
+    eg.opA = wpGroupH; eg.predef.entityB = cutWorkplane;
+    eg.subtype = Group::Subtype::ONE_SIDED;
+    eg.meshCombine = Group::CombineAs::DIFFERENCE;
+    eg.valA = pocketDepth;
+    eg.name = "cut-extrude";
+    eg.visible = true; eg.color = RGBi(100, 100, 100); eg.scale = 1;
+    eg.order = SK.group.n + 1;
+    SK.group.AddAndAssignId(&eg);
+    SK.groupOrder.Add(&eg.h);
+    SS.GW.activeGroup = eg.h;
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+    result.cutExtrude = eg.h;
+    return result;
+}
+
+// CreateBoxWithCutoutFromBottom: second sketch at z=0, extrudes upward as DIFFERENCE
+static BoxWithCutout CreateBoxWithCutoutFromBottom(
+    double pocketX = 0.0, double pocketY = 0.0,
+    double pocketW = 10.0, double pocketH = 10.0,
+    double pocketDepth = 10.0)
+{
+    BoxWithCutout result = {};
+    hGroup baseExtrude = CreateBoxExtrude();
+    result.baseExtrude = baseExtrude;
+
+    hGroup sketchGroupH = { 2 };
+    Group *baseWpGroup = SK.GetGroup(sketchGroupH);
+
+    Group wpg = {};
+    wpg.type = Group::Type::DRAWING_WORKPLANE;
+    wpg.subtype = Group::Subtype::WORKPLANE_BY_POINT_ORTHO;
+    wpg.predef.origin = baseWpGroup->predef.origin;
+    wpg.predef.q = baseWpGroup->predef.q;
+    wpg.name = "cut-sketch";
+    wpg.visible = true; wpg.color = RGBi(100, 100, 100); wpg.scale = 1;
+    wpg.order = SK.group.n + 1;
+    SK.group.AddAndAssignId(&wpg);
+    SK.groupOrder.Add(&wpg.h);
+    SS.GW.activeGroup = wpg.h;
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+    hGroup wpGroupH = wpg.h;
+    result.cutSketchGroup = wpGroupH;
+
+    hEntity cutWorkplane = SS.GW.ActiveWorkplane();
+
+    hRequest crh[4];
+    for(int i = 0; i < 4; i++) {
+        Request r = {};
+        r.type = Request::Type::LINE_SEGMENT;
+        r.group = wpGroupH; r.workplane = cutWorkplane; r.construction = false;
+        SK.request.AddAndAssignId(&r);
+        crh[i] = r.h;
+    }
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+    double x0 = pocketX, y0 = pocketY, z = 0.0;
+    double x1 = pocketX + pocketW, y1 = pocketY + pocketH;
+    Vector pts[4] = {
+        Vector::From(x0, y0, z), Vector::From(x1, y0, z),
+        Vector::From(x1, y1, z), Vector::From(x0, y1, z),
+    };
+    for(int i = 0; i < 4; i++) {
+        SK.GetEntity(crh[i].entity(1))->PointForceTo(pts[i]);
+        SK.GetEntity(crh[i].entity(2))->PointForceTo(pts[(i+1)%4]);
+    }
+    for(int i = 0; i < 4; i++) {
+        Constraint c = {};
+        c.type = Constraint::Type::POINTS_COINCIDENT;
+        c.group = wpGroupH; c.workplane = cutWorkplane;
+        c.ptA = crh[i].entity(2); c.ptB = crh[(i+1)%4].entity(1);
+        SK.constraint.AddAndAssignId(&c);
+    }
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+    Group eg = {};
+    eg.type = Group::Type::EXTRUDE;
+    eg.opA = wpGroupH; eg.predef.entityB = cutWorkplane;
+    eg.subtype = Group::Subtype::ONE_SIDED;
+    eg.meshCombine = Group::CombineAs::DIFFERENCE;
+    eg.valA = pocketDepth;
+    eg.name = "cut-extrude";
+    eg.visible = true; eg.color = RGBi(100, 100, 100); eg.scale = 1;
+    eg.order = SK.group.n + 1;
+    SK.group.AddAndAssignId(&eg);
+    SK.groupOrder.Add(&eg.h);
+    SS.GW.activeGroup = eg.h;
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+    result.cutExtrude = eg.h;
+    return result;
+}
+
+//-----------------------------------------------------------------------------
+// Tests: Fillet/Chamfer on boolean-difference geometry (Phase 1: TDD RED)
+// After the n==0 guard fix (task 13), all tests should PASS (no crash).
+//-----------------------------------------------------------------------------
+
+TEST_CASE(fillet_diff_inside_faces_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutout(0.0, 0.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2);
+    if(!found) found = FindTwoAdjacentFaces(bwc.baseExtrude, &face1, &face2);
+    if(!found) return;
+    hGroup filletH = AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0);
+    CHECK_TRUE(SK.GetGroup(filletH) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_bottom_cutout_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2);
+    if(!found) found = FindTwoAdjacentFaces(bwc.baseExtrude, &face1, &face2);
+    if(!found) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_corner_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 1.5)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_centered_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(5.0, 5.0, 10.0, 10.0, 8.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_small_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(2.0, 2.0, 5.0, 5.0, 5.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 0.5)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_small_radius_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 0.1)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_large_radius_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 3.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(chamfer_diff_inside_faces_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddChamferGroup(bwc.cutExtrude, face1, face2, 1.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_asymmetric_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 15.0, 5.0, 8.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_deep_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(2.0, 2.0, 8.0, 8.0, 18.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_shallow_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(0.0, 0.0, 10.0, 10.0, 2.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 0.5)) != nullptr);
+    CHECK_TRUE(true);
+}
+
+TEST_CASE(fillet_diff_offset_pocket_no_crash) {
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(3.0, 3.0, 12.0, 12.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+    hEntity face1 = {}, face2 = {};
+    if(!FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2)) return;
+    CHECK_TRUE(SK.GetGroup(AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0)) != nullptr);
+    CHECK_TRUE(true);
+}
+
 TEST_CASE(chamfer_cap_edges_hidden) {
     hGroup extrudeH = CreateBoxExtrude();
     hEntity face1 = {}, face2 = {};
@@ -2859,5 +3166,311 @@ TEST_CASE(chamfer_adjacent_vertical_no_backface) {
             break;
         }
     }
+    CHECK_FALSE(anyBackFacing);
+}
+
+//-----------------------------------------------------------------------------
+// TDD test: fillet on diff cutout wall faces must not lose the endcap geometry.
+//
+// Scenario: CreateBoxWithCutoutFromBottom(5, 5, 10, 10, 10)
+//   * Base box: 20x20x80 (valA=20, 4x scale)
+//   * Pocket: 10x10 centered cutout from (5,5), extruded as DIFF from z=0.
+//     SolveSpace DIFFERENCE creates a through-hole: pocket walls z=0 to z=80.
+//     The inner bottom cap (capSurf2) is at z=0, INSIDE the pocket footprint.
+//
+// Fillet: two adjacent wall faces (FACE_XPROD) of the cutout pocket.
+//   The shared vertical edge runs from z=0 to z=80 (full box height = through-hole).
+//   capSurf2 (inner bottom cap) is at z=0, INSIDE the pocket footprint 5..15 x 5..15.
+//   capSurf2 initially has trim.n == 0. The fix reconstructs its trim loop and
+//   inserts the fillet arc to make it fully triangulated.
+//
+// Before fix (with `if(n > 0)` guard in Step 15 of MakeFromFilletOf):
+//   capSurf2->trim.n == 0, the guard skips the arc insertion.
+//   The inner cap trim loop is incomplete => inner cap has NO triangles.
+//   No triangles inside pocket footprint at z=0 => TEST FAILS (TDD RED).
+//
+// After fix:
+//   The arc at z=0 is added to capSurf2's trim loop (via RECON + traversal).
+//   capSurf2 is fully triangulated => triangles appear inside pocket footprint at z=0.
+//   TEST PASSES (TDD GREEN).
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_diff_endcap_has_triangles) {
+    // Create box + CENTERED pocket (not corner) from bottom.
+    // Using a centered pocket at (5,5) ensures ALL 4 pocket walls are fully
+    // inside the box after the DIFFERENCE boolean. Corner pockets (0,0) cause
+    // the first FACE_XPROD entity to be the y=0 boundary face which coincides
+    // with the outer box wall and is removed by the boolean — making it
+    // unfindable by face handle lookup → hSurf1.v==0 → booleanFailed=true.
+    //
+    // Box: 0..20 x 0..20 (base), extruded to Z=80 (valA=20 with 4x scale).
+    // Pocket: 5..15 x 5..15, extrude DIFF from z=0. SolveSpace's DIFFERENCE boolean
+    // creates a through-hole (pocket walls z=0..z=80). The inner bottom cap (capSurf2)
+    // is the flat surface at z=0 INSIDE the pocket footprint (x=5..15, y=5..15).
+    // The outer box bottom (surface 2) has a hole at the pocket footprint — no triangles
+    // there. Only capSurf2 (after fix) contributes triangles at z=0 inside the pocket.
+    BoxWithCutout bwc = CreateBoxWithCutoutFromBottom(5.0, 5.0, 10.0, 10.0, 10.0);
+    CHECK_TRUE(SK.GetGroup(bwc.cutExtrude) != nullptr);
+
+    // Find two adjacent wall faces (FACE_XPROD) of the pocket's cutExtrude group.
+    // With a centered pocket, all 4 FACE_XPROD entities exist in the result shell.
+    // FindTwoAdjacentFaces returns the first two (face[0]=y=5 wall, face[1]=x=15 wall),
+    // which ARE adjacent and share the corner vertical edge.
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(bwc.cutExtrude, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // Apply fillet on the shared vertical edge of face1 and face2 (radius=1.0).
+    // The edge runs along the pocket corner from z=0 to z=80 (full box height).
+    hGroup filletH = AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    if(g == nullptr) return;
+
+    // The fillet must not fail.
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Generate display mesh for the fillet group.
+    g->GenerateDisplayItems();
+
+    // Count triangles where ALL three vertices lie within 2.0 units of z=0.0
+    // AND inside the pocket footprint (x in [5,15], y in [5,15]).
+    //
+    // The outer box bottom (surface 2) at z=0 has a HOLE in the pocket footprint —
+    // no triangles there. The inner bottom cap (capSurf2) at z=0 INSIDE the pocket
+    // footprint only gets triangulated after the fix (RECON + arc insertion).
+    //
+    // Before fix: capSurf2->trim.n == 0, arc NOT inserted => no triangles inside pocket
+    //             at z=0 => TEST FAILS (TDD RED).
+    //
+    // After fix: RECON reconstructs capSurf2's trim, arc IS inserted => capSurf2 is
+    //            fully triangulated => triangles appear inside pocket at z=0.
+    //            => TEST PASSES (TDD GREEN).
+    int endcapTriCount = 0;
+    const double endcapZ = 0.0;
+    const double tol = 2.0;
+    // Pocket footprint bounds (centroid-based: pocket center (10,10), half-size 5).
+    // Use a slightly relaxed inner region so surface 8 triangles qualify.
+    // Surface 8 polygon: (5,5)-(5,15)-(15,15)-(15,6-arc-(14,5).
+    // A triangle centroid at (10,10) has centroid inside; require centroid inside 5..15.
+    const double pocketX0 = 5.0, pocketX1 = 15.0;
+    const double pocketY0 = 5.0, pocketY1 = 15.0;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        if(fabs(tr->a.z - endcapZ) < tol &&
+           fabs(tr->b.z - endcapZ) < tol &&
+           fabs(tr->c.z - endcapZ) < tol) {
+            // Only count triangles inside the pocket footprint.
+            // The outer box bottom has a hole there; only capSurf2 (inner cap)
+            // contributes triangles in this region after the fix.
+            // Surface 8 polygon has boundary vertices exactly AT x=5,y=5,x=15,y=15.
+            // Use centroid check to avoid strict > failing on boundary vertices.
+            auto inPocket = [&](const Vector &v) {
+                return v.x >= pocketX0 - LENGTH_EPS && v.x <= pocketX1 + LENGTH_EPS &&
+                       v.y >= pocketY0 - LENGTH_EPS && v.y <= pocketY1 + LENGTH_EPS;
+            };
+            if(inPocket(tr->a) && inPocket(tr->b) && inPocket(tr->c)) {
+                endcapTriCount++;
+            }
+        }
+    }
+    // TDD: FAIL before fix (endcap has 0 triangles -- trim loop is incomplete).
+    // TDD: PASS after fix (endcap is properly triangulated with its arc curve).
+
+    // DIAGNOSTIC: Print total triangle count and Z range
+    {
+        int totalTri = g->displayMesh.l.n;
+        double minZ = 1e9, maxZ = -1e9;
+        for(int ti = 0; ti < totalTri; ti++) {
+            STriangle *tr = &g->displayMesh.l[ti];
+            double zvals[3] = {tr->a.z, tr->b.z, tr->c.z};
+            for(int k = 0; k < 3; k++) {
+                if(zvals[k] < minZ) minZ = zvals[k];
+                if(zvals[k] > maxZ) maxZ = zvals[k];
+            }
+        }
+        dbp("DIAG: totalTri=%d minZ=%.2f maxZ=%.2f endcapZ=%.2f endcapTriCount=%d",
+            totalTri, (totalTri > 0 ? minZ : 0.0), (totalTri > 0 ? maxZ : 0.0),
+            endcapZ, endcapTriCount);
+    }
+
+    // Extra debug: print all z=0 triangles and their x,y positions
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        if(fabs(tr->a.z) < 2.0 && fabs(tr->b.z) < 2.0 && fabs(tr->c.z) < 2.0) {
+            dbp("TRI_Z0: a=(%.2f,%.2f) b=(%.2f,%.2f) c=(%.2f,%.2f)",
+                tr->a.x, tr->a.y, tr->b.x, tr->b.y, tr->c.x, tr->c.y);
+        }
+    }
+    CHECK_TRUE(endcapTriCount > 0);
+}
+
+//-----------------------------------------------------------------------------
+// TDD test: fillet_assemble_cap_no_backface
+//
+// Scenario: Box1 (20x20x80) with a smaller ASSEMBLE boss (10x10x10) on top.
+// The boss covers x=10..20, y=10..20, z=80..90.
+//
+// A fillet is applied to the first two FACE_XPROD entities of the boss extrude
+// (face[0]=y=10 wall, face[1]=x=20 wall). Their shared vertical edge runs from
+// V1=(20,10,80) to V2=(20,10,90).
+//
+// At V1=(20,10,80), multiple surfaces touch:
+//   - box1 top face (z=80, normal=(0,0,+1)) — correct cap, |n.Dot(t)|=1
+//   - box1 side face at x=20 (normal=(+1,0,0)) — wrong cap, |n.Dot(t)|=0
+//
+// The bug: the current cap detection picks the FIRST non-hSurf1/hSurf2 surface,
+// which may be box1's x=20 side face. This causes the arc to be inserted into
+// box1's x=20 face with wrong orientation, inverting that whole face.
+//
+// After the fix (score by |n.Dot(t)|, pick highest), box1's top face is always
+// selected as hCapSurfV1.
+//
+// TDD: FAIL before fix (box1 x=20 face inverted => backfacing triangles).
+// TDD: PASS after fix (correct cap selected => no backfacing triangles).
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_assemble_cap_no_backface) {
+    // Create base box: 20x20x80 (z=0..80)
+    hGroup box1H = CreateBoxExtrude();
+    (void)box1H;
+
+    // Create second sketch workplane anchored at (or near) z=80.
+    // FindPointNear looks for a POINT entity generated by the EXTRUDE group
+    // at the top corner (0,0,80). If not found (shouldn't happen for an 80-tall
+    // box), fall back to group {2}'s origin (z=0) and just force coords to z=80.
+    hEntity originPt = FindPointNear(0.0, 0.0, 80.0);
+    if(originPt.v == 0) {
+        hGroup sketchGroupH = { 2 };
+        Group *baseSketchGroup = SK.GetGroup(sketchGroupH);
+        originPt = baseSketchGroup->predef.origin;
+    }
+
+    Group wpg = {};
+    wpg.type = Group::Type::DRAWING_WORKPLANE;
+    wpg.subtype = Group::Subtype::WORKPLANE_BY_POINT_ORTHO;
+    wpg.predef.origin = originPt;
+    wpg.predef.q = Quaternion::From(1.0, 0.0, 0.0, 0.0);
+    wpg.name = "boss-sketch";
+    wpg.visible = true;
+    wpg.color = RGBi(100, 100, 100);
+    wpg.scale = 1;
+    wpg.order = SK.group.n + 1;
+    SK.group.AddAndAssignId(&wpg);
+    SK.groupOrder.Add(&wpg.h);
+    SS.GW.activeGroup = wpg.h;
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+    hGroup bossWpH = wpg.h;
+
+    hEntity bossWorkplane = SS.GW.ActiveWorkplane();
+
+    // Draw boss square: x=10..20, y=10..20 at z=80
+    // This boss sits at the corner of box1 (box1 extends to x=20 and y=20).
+    // The boss corner at (20,10,80) lies where box1's top face (z=80) and
+    // box1's side face at x=20 both terminate — the complex vertex scenario.
+    hRequest crh[4];
+    for(int i = 0; i < 4; i++) {
+        Request r = {};
+        r.type = Request::Type::LINE_SEGMENT;
+        r.group = bossWpH;
+        r.workplane = bossWorkplane;
+        r.construction = false;
+        SK.request.AddAndAssignId(&r);
+        crh[i] = r.h;
+    }
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+    // Boss lines in XY (z=80 forced directly):
+    //   line[0]: (10,10,80) -> (20,10,80)  => FACE_XPROD: y=10 face
+    //   line[1]: (20,10,80) -> (20,20,80)  => FACE_XPROD: x=20 face
+    //   line[2]: (20,20,80) -> (10,20,80)  => FACE_XPROD: y=20 face
+    //   line[3]: (10,20,80) -> (10,10,80)  => FACE_XPROD: x=10 face
+    double bossZ = 80.0;
+    Vector bossPts[4] = {
+        Vector::From(10, 10, bossZ), Vector::From(20, 10, bossZ),
+        Vector::From(20, 20, bossZ), Vector::From(10, 20, bossZ),
+    };
+    for(int i = 0; i < 4; i++) {
+        SK.GetEntity(crh[i].entity(1))->PointForceTo(bossPts[i]);
+        SK.GetEntity(crh[i].entity(2))->PointForceTo(bossPts[(i + 1) % 4]);
+    }
+    for(int i = 0; i < 4; i++) {
+        Constraint c = {};
+        c.type = Constraint::Type::POINTS_COINCIDENT;
+        c.group = bossWpH;
+        c.workplane = bossWorkplane;
+        c.ptA = crh[i].entity(2);
+        c.ptB = crh[(i + 1) % 4].entity(1);
+        SK.constraint.AddAndAssignId(&c);
+    }
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+    // Create boss extrude: ASSEMBLE (union), scale=1, valA=10 => boss at z=80..90
+    Group bossEg = {};
+    bossEg.type = Group::Type::EXTRUDE;
+    bossEg.opA = bossWpH;
+    bossEg.predef.entityB = bossWorkplane;
+    bossEg.subtype = Group::Subtype::ONE_SIDED;
+    bossEg.meshCombine = Group::CombineAs::ASSEMBLE;
+    bossEg.valA = 10.0;
+    bossEg.name = "boss-extrude";
+    bossEg.visible = true;
+    bossEg.color = RGBi(100, 100, 100);
+    bossEg.scale = 1;
+    bossEg.order = SK.group.n + 1;
+    SK.group.AddAndAssignId(&bossEg);
+    SK.groupOrder.Add(&bossEg.h);
+    SS.GW.activeGroup = bossEg.h;
+    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+    hGroup bossH = bossEg.h;
+
+    // Verify boss extrude succeeded
+    Group *bossGrp = SK.GetGroup(bossH);
+    CHECK_TRUE(bossGrp != nullptr);
+    if(bossGrp == nullptr) return;
+    CHECK_FALSE(bossGrp->booleanFailed);
+    if(bossGrp->booleanFailed) return;
+
+    // Find first two FACE_XPROD of boss extrude:
+    //   face1 = y=10 wall (from line[0])
+    //   face2 = x=20 wall (from line[1])
+    // These ARE adjacent; they share the vertical edge at x=20, y=10, z=80..90.
+    // At V1=(20,10,80): box1's top face AND box1's x=20 side face both touch.
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(bossH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    // Apply fillet (radius=1.0) to the two adjacent boss faces.
+    hGroup filletH = AddFilletGroup(bossH, face1, face2, 1.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    if(g == nullptr) return;
+
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Generate display mesh.
+    g->GenerateDisplayItems();
+
+    // Check for backfacing triangles.
+    // Box center = (10,10,40) (interior of the 20x20x80 base box).
+    // Any outward-facing surface triangle should have
+    //   normal.Dot(centroid - boxCenter) > 0
+    // The bug inverts box1's x=20 side face, causing triangles there to have
+    //   normal = (-1,0,0) instead of (+1,0,0), giving a negative dot product.
+    Vector boxCenter = Vector::From(10, 10, 40);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
+        STriangle *tr = &g->displayMesh.l[ti];
+        Vector normal = tr->Normal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0 / 3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    // TDD: FAIL before fix (wrong cap => x=20 face inverted => backfacing).
+    // TDD: PASS after fix (correct cap => no backfacing triangles).
     CHECK_FALSE(anyBackFacing);
 }

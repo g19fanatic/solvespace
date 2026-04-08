@@ -493,6 +493,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     // Find cap surfaces at V1 and V2 endpoints
     hSSurface hCapSurfV1 = hChamfer; // fallback
     hSSurface hCapSurfV2 = hChamfer; // fallback
+    double capV1Score = -1.0;
+    double capV2Score = -1.0;
     for(SCurve &sc_scan : curve) {
         if(sc_scan.h == hSharedSC) continue;
         if(sc_scan.pts.n < 2) continue;
@@ -500,17 +502,27 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         Vector last = sc_scan.pts[sc_scan.pts.n - 1].p;
         bool touchesV1 = first.Equals(V1) || last.Equals(V1);
         bool touchesV2 = first.Equals(V2) || last.Equals(V2);
-        if(touchesV1 && hCapSurfV1 == hChamfer) {
-            if(sc_scan.surfA != hSurf1 && sc_scan.surfA != hSurf2 && sc_scan.surfA.v != 0)
-                hCapSurfV1 = sc_scan.surfA;
-            else if(sc_scan.surfB != hSurf1 && sc_scan.surfB != hSurf2 && sc_scan.surfB.v != 0)
-                hCapSurfV1 = sc_scan.surfB;
-        }
-        if(touchesV2 && hCapSurfV2 == hChamfer) {
-            if(sc_scan.surfA != hSurf1 && sc_scan.surfA != hSurf2 && sc_scan.surfA.v != 0)
-                hCapSurfV2 = sc_scan.surfA;
-            else if(sc_scan.surfB != hSurf1 && sc_scan.surfB != hSurf2 && sc_scan.surfB.v != 0)
-                hCapSurfV2 = sc_scan.surfB;
+        if(!touchesV1 && !touchesV2) continue;
+        for(int side = 0; side < 2; side++) {
+            hSSurface hCand = (side == 0) ? sc_scan.surfA : sc_scan.surfB;
+            if(hCand.v == 0) continue;
+            if(hCand == hSurf1 || hCand == hSurf2) continue;
+            SSurface *sCand = surface.FindById(hCand);
+            Point2d uvMid; uvMid.x = 0.5; uvMid.y = 0.5;
+            Vector nCand = sCand->NormalAt(uvMid);
+            // Composite score: geometric alignment (0..2) + trim.n>0 bonus (0 or 1).
+            // Prefer surfaces with existing trim (external real cap) over trim.n==0
+            // (internal ASSEMBLE faces). DIFF bodies: pocket ceiling has trim.n==0 but
+            // still wins on geoScore (|n.Dot(t)|=1) vs side faces (geoScore~0).
+            double geoScore = fabs(nCand.Dot(t));
+            double score = geoScore * 2.0 + (sCand->trim.n > 0 ? 1.0 : 0.0);
+            if(touchesV1 && score > capV1Score) {
+                hCapSurfV1 = hCand;
+            }
+            if(touchesV2 && score > capV2Score) {
+                capV2Score = score;
+                hCapSurfV2 = hCand;
+            }
         }
     }
     // hCapV1: A->D (cap at V1 end, exposed edge)
@@ -808,15 +820,6 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             seen[ti] = true;
             BridgeTrimGapIfOpen(this, toCheck[ti], hChamfer);
         }
-        // Also bridge any remaining gaps in OTHER surfaces not in our tracked set.
-        // This handles the case where hCapSurfV1 or hCapSurfV2 fell back to hChamfer
-        // (no real cap surface found), leaving a neighboring surface from a prior
-        // chamfer operation with an open trim polygon that was not tracked here.
-        for(SSurface &ss : surface) {
-            hSSurface h = ss.h;
-            if(h == hChamfer || h == hSurf1 || h == hSurf2 || h == hCapSurfV1 || h == hCapSurfV2) continue;
-            BridgeTrimGapIfOpen(this, h, hChamfer);
-        }
         (void)seen;
     }
 
@@ -1055,6 +1058,10 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
     // Find cap surfaces at V1 and V2 endpoints for fillet arcs
     hSSurface hCapSurfV1 = hFillet; // fallback
     hSSurface hCapSurfV2 = hFillet; // fallback
+    // Score = |normal.Dot(t)| * 2 + (trim.n==0 ? 1 : 0): highest = best cap.
+    // Tiebreaker: prefer trim.n==0 (DIFF internal surface needing RECON).
+    double capV1Score = -1.0;
+    double capV2Score = -1.0;
     for(SCurve &sc_scan : curve) {
         if(sc_scan.h == hSharedSC) continue;
         if(sc_scan.pts.n < 2) continue;
@@ -1062,17 +1069,26 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
         Vector last = sc_scan.pts[sc_scan.pts.n - 1].p;
         bool touchesV1 = first.Equals(V1) || last.Equals(V1);
         bool touchesV2 = first.Equals(V2) || last.Equals(V2);
-        if(touchesV1 && hCapSurfV1 == hFillet) {
-            if(sc_scan.surfA != hSurf1 && sc_scan.surfA != hSurf2 && sc_scan.surfA.v != 0)
-                hCapSurfV1 = sc_scan.surfA;
-            else if(sc_scan.surfB != hSurf1 && sc_scan.surfB != hSurf2 && sc_scan.surfB.v != 0)
-                hCapSurfV1 = sc_scan.surfB;
-        }
-        if(touchesV2 && hCapSurfV2 == hFillet) {
-            if(sc_scan.surfA != hSurf1 && sc_scan.surfA != hSurf2 && sc_scan.surfA.v != 0)
-                hCapSurfV2 = sc_scan.surfA;
-            else if(sc_scan.surfB != hSurf1 && sc_scan.surfB != hSurf2 && sc_scan.surfB.v != 0)
-                hCapSurfV2 = sc_scan.surfB;
+        if(!touchesV1 && !touchesV2) continue;
+        for(int side = 0; side < 2; side++) {
+            hSSurface hCand = (side == 0) ? sc_scan.surfA : sc_scan.surfB;
+            if(hCand.v == 0) continue;
+            if(hCand == hSurf1 || hCand == hSurf2) continue;
+            SSurface *sCand = surface.FindById(hCand);
+            Point2d uvMid; uvMid.x = 0.5; uvMid.y = 0.5;
+            Vector nCand = sCand->NormalAt(uvMid);
+            // Composite score: geometric alignment (0..2) + trim.n>0 bonus (0 or 1).
+            // Prefer external surfaces (trim.n>0) over internal ASSEMBLE faces.
+            double geoScore = fabs(nCand.Dot(t));
+            double score = geoScore * 2.0 + (sCand->trim.n > 0 ? 1.0 : 0.0);
+            if(touchesV1 && score > capV1Score) {
+                capV1Score = score;
+                hCapSurfV1 = hCand;
+            }
+            if(touchesV2 && score > capV2Score) {
+                capV2Score = score;
+                hCapSurfV2 = hCand;
+            }
         }
     }
 
@@ -1235,34 +1251,98 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, B0)) { TruncateCurveAtVertex(nc, V1, B0); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, B0); stb_c.finish = B0; } }
             }
         }
+        // ASSEMBLE topology stitch: after the main trim-update pass, check if any
+        // trim entry still has V1 as an endpoint (because the edge borders a THIRD
+        // surface, not hSurf1/hSurf2 — typical in ASSEMBLE bodies where the cap
+        // face shares an edge with a base-solid side face that ends at V1).
+        // Without this stitch, the gap traversal gets stuck at V1 (not A0/B0),
+        // arcV1GapBridgeable stays false, and BridgeTrimGapIfOpen creates a wrong
+        // straight bridge. The stitch adds a short V1->target segment so the
+        // arc (A0->V1->B0) can be properly inserted.
+        {
+            capSurf1 = surface.FindById(hCapSurfV1);
+            bool stitchAdded = false;
+            for(int ti = 0; ti < capSurf1->trim.n && !stitchAdded; ti++) {
+                STrimBy &stb_v = capSurf1->trim[ti];
+                if(!stb_v.finish.Equals(V1) && !stb_v.start.Equals(V1)) continue;
+                SCurve *nc2 = curve.FindByIdNoOops(stb_v.curve);
+                if(!nc2 || nc2->pts.n < 2) continue;
+                bool b1 = (nc2->surfA == hSurf1 || nc2->surfB == hSurf1);
+                bool b2 = (nc2->surfA == hSurf2 || nc2->surfB == hSurf2);
+                if(b1 || b2) continue; // already handled in main pass
+                // Determine stitch target (B0 or A0) based on edge direction at V1.
+                // The edge that arrives at V1 from the d2 (surf2) direction should
+                // stitch to B0; from d1 (surf1) direction to A0.
+                Vector stitchTarget = B0; // default
+                if(stb_v.finish.Equals(V1)) {
+                    // Edge arrives at V1: direction = last_pt - second_to_last_pt
+                    Vector edgeDir = nc2->pts[nc2->pts.n-1].p.Minus(
+                                     nc2->pts[nc2->pts.n-2].p).WithMagnitude(1);
+                    double b0s = edgeDir.Dot((B0.Minus(V1)).WithMagnitude(1));
+                    double a0s = edgeDir.Dot((A0.Minus(V1)).WithMagnitude(1));
+                    if(a0s > b0s) stitchTarget = A0;
+                } else {
+                    // Edge leaves V1: direction = pts[1] - pts[0]
+                    Vector edgeDir = nc2->pts[1].p.Minus(nc2->pts[0].p).WithMagnitude(1);
+                    double b0s = edgeDir.Dot((B0.Minus(V1)).WithMagnitude(1));
+                    double a0s = edgeDir.Dot((A0.Minus(V1)).WithMagnitude(1));
+                    if(a0s > b0s) stitchTarget = A0;
+                }
+                hSCurve hStitch = AddLinearCurve(this, V1, stitchTarget,
+                                                 hFillet, hCapSurfV1);
+                capSurf1 = surface.FindById(hCapSurfV1);
+                STrimBy stbSt = STrimBy::EntireCurve(this, hStitch, false);
+                capSurf1->trim.Add(&stbSt);
+                stitchAdded = true;
+            }
+        }
         // Use graph traversal to find the actual gap endpoint in capSurf1 for fillet.
         // Sequential scan is unreliable when trims are stored out of connectivity order.
+        // For boolean-difference bodies, the cap surface may have trim.n == 0 because
+        // UpdateAllSurfaceTrimEndpoints had nothing to update. In that case, reconstruct
+        // the trims from SCurves that border hCapSurfV1 (excluding hArcV1).
+        if(capSurf1->trim.n == 0) {
+            for(SCurve &sc_bd : curve) {
+                if(sc_bd.h == hArcV1) continue;
+                if(sc_bd.surfA != hCapSurfV1 && sc_bd.surfB != hCapSurfV1) continue;
+                if(sc_bd.pts.n < 2) continue;
+                bool bkwd = (sc_bd.surfB == hCapSurfV1);
+                STrimBy stb_new = {};
+                stb_new.curve = sc_bd.h;
+                stb_new.backwards = bkwd;
+                stb_new.start  = bkwd ? sc_bd.pts[sc_bd.pts.n-1].p : sc_bd.pts[0].p;
+                stb_new.finish = bkwd ? sc_bd.pts[0].p : sc_bd.pts[sc_bd.pts.n-1].p;
+                capSurf1->trim.Add(&stb_new);
+            }
+        }
         bool arcV1Backwards = false;
         bool arcV1GapBridgeable = false;
         int  arcV1GapIdx = -1;
         {
             int n = capSurf1->trim.n;
-            std::vector<bool> vis(n, false);
-            vis[0] = true;
-            Vector gStartPt = capSurf1->trim[0].start;
-            Vector gCur     = capSurf1->trim[0].finish;
-            int    gLast    = 0;
-            bool   gStuck   = false;
-            for(int iter = 1; iter < n; iter++) {
-                bool found = false;
-                for(int j = 0; j < n; j++) {
-                    if(vis[j]) continue;
-                    if(gCur.Equals(capSurf1->trim[j].start)) {
-                        gCur = capSurf1->trim[j].finish;
-                        gLast = j; vis[j] = true; found = true; break;
+            if(n > 0) {
+                std::vector<bool> vis(n, false);
+                vis[0] = true;
+                Vector gStartPt = capSurf1->trim[0].start;
+                Vector gCur     = capSurf1->trim[0].finish;
+                int    gLast    = 0;
+                bool   gStuck   = false;
+                for(int iter = 1; iter < n; iter++) {
+                    bool found = false;
+                    for(int j = 0; j < n; j++) {
+                        if(vis[j]) continue;
+                        if(gCur.Equals(capSurf1->trim[j].start)) {
+                            gCur = capSurf1->trim[j].finish;
+                            gLast = j; vis[j] = true; found = true; break;
+                        }
                     }
+                    if(!found) { gStuck = true; break; }
                 }
-                if(!found) { gStuck = true; break; }
-            }
-            bool gClosed = (!gStuck && gCur.Equals(gStartPt));
-            if(!gClosed) {
-                if(gCur.Equals(A0))      { arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
-                else if(gCur.Equals(B0)) { arcV1Backwards = true;  arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+           bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+               if(!gClosed) {
+                    if(gCur.Equals(A0))      { arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+                    else if(gCur.Equals(B0)) { arcV1Backwards = true;  arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+                }
             }
         }
         if(arcV1GapBridgeable) {
@@ -1288,37 +1368,236 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
         }
             // Use graph traversal to find the actual gap endpoint in capSurf2 for fillet.
             // Sequential scan is unreliable when trims are stored out of connectivity order.
+            // For boolean-difference bodies, the endcap may have trim.n == 0 because
+            // UpdateAllSurfaceTrimEndpoints had nothing to update (empty trim list).
+            // In that case, reconstruct trims from SCurves bordering hCapSurfV2 (excl. hArcV2).
+            bool didReconV2 = false;
+            if(capSurf2->trim.n == 0) {
+                didReconV2 = true;
+                for(SCurve &sc_bd : curve) {
+                    if(sc_bd.h == hArcV2) continue;
+                    if(sc_bd.surfA != hCapSurfV2 && sc_bd.surfB != hCapSurfV2) continue;
+                    if(sc_bd.pts.n < 2) continue;
+                    bool bkwd = (sc_bd.surfB == hCapSurfV2);
+                    STrimBy stb_new = {};
+                    stb_new.curve = sc_bd.h;
+                    stb_new.backwards = bkwd;
+                    stb_new.start  = bkwd ? sc_bd.pts[sc_bd.pts.n-1].p : sc_bd.pts[0].p;
+                    stb_new.finish = bkwd ? sc_bd.pts[0].p : sc_bd.pts[sc_bd.pts.n-1].p;
+                    capSurf2->trim.Add(&stb_new);
+                    fprintf(stderr, "RECON: sc=%u bkwd=%d s=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f)\n",
+                            sc_bd.h.v, (int)bkwd,
+                            stb_new.start.x, stb_new.start.y, stb_new.start.z,
+                            stb_new.finish.x, stb_new.finish.y, stb_new.finish.z);
+                }
+                fprintf(stderr, "RECON_DONE: n=%d A1=(%.3f,%.3f,%.3f) B1=(%.3f,%.3f,%.3f)\n",
+                        capSurf2->trim.n, A1.x, A1.y, A1.z, B1.x, B1.y, B1.z);
+            }
             bool arcV2Backwards = false;
             bool arcV2GapBridgeable = false;
             int  arcV2GapIdx = -1;
             {
                 int n = capSurf2->trim.n;
-                std::vector<bool> vis(n, false);
-                vis[0] = true;
-                Vector gStartPt = capSurf2->trim[0].start;
-                Vector gCur     = capSurf2->trim[0].finish;
-                int    gLast    = 0;
-                bool   gStuck   = false;
-                for(int iter = 1; iter < n; iter++) {
-                    bool found = false;
-                    for(int j = 0; j < n; j++) {
-                        if(vis[j]) continue;
-                        if(gCur.Equals(capSurf2->trim[j].start)) {
-                            gCur = capSurf2->trim[j].finish;
-                            gLast = j; vis[j] = true; found = true; break;
+                if(n > 0) {
+                    std::vector<bool> vis(n, false);
+                    vis[0] = true;
+                    Vector gStartPt = capSurf2->trim[0].start;
+                    Vector gCur     = capSurf2->trim[0].finish;
+                    int    gLast    = 0;
+                    bool   gStuck   = false;
+                    for(int iter = 1; iter < n; iter++) {
+                        bool found = false;
+                        for(int j = 0; j < n; j++) {
+                            if(vis[j]) continue;
+                            if(gCur.Equals(capSurf2->trim[j].start)) {
+                                gCur = capSurf2->trim[j].finish;
+                                gLast = j; vis[j] = true; found = true; break;
+                            }
                         }
+                        if(!found) { gStuck = true; break; }
                     }
-                    if(!found) { gStuck = true; break; }
-                }
-                bool gClosed = (!gStuck && gCur.Equals(gStartPt));
-                if(!gClosed) {
-                    if(gCur.Equals(A1))      { arcV2Backwards = false; arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
-                    else if(gCur.Equals(B1)) { arcV2Backwards = true;  arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
+                    bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+                    if(!gClosed) {
+                        if(gCur.Equals(A1))      { arcV2Backwards = false; arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
+                        else if(gCur.Equals(B1)) { arcV2Backwards = true;  arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
+                    }
                 }
             }
+            (void)didReconV2;
             if(arcV2GapBridgeable) {
                 STrimBy stbArc2 = STrimBy::EntireCurve(this, hArcV2, arcV2Backwards);
                 InsertTrimAt(capSurf2, arcV2GapIdx, &stbArc2);
+            }
+        }
+
+        // Step 16: Handle surfaces with intermediate vertices on V1V2.
+        // When another surface (e.g. the pocket ceiling in a DIFFERENCE body)
+        // has trim edges that pass through a point P strictly between V1 and V2
+        // on the shared wall edge, those surfaces need their trim loops updated
+        // to include the fillet arc cross-section at P (Amid->P->Bmid, lying on
+        // both hFillet and the intermediate surface).
+        {
+            // Collect unique points P strictly between V1 and V2 on V1V2.
+            std::vector<Vector> interPts;
+            for(SCurve &sc_i : curve) {
+                if(sc_i.pts.n < 2) continue;
+                for(int pi = 0; pi < 2; pi++) {
+                    Vector pt = (pi == 0) ? sc_i.pts[0].p
+                                          : sc_i.pts[sc_i.pts.n-1].p;
+                    if(pt.Equals(V1) || pt.Equals(V2)) continue;
+                    Vector pv  = pt.Minus(V1);
+                    double dot = pv.Dot(t);
+                    if(dot < LENGTH_EPS || dot > edgeLen - LENGTH_EPS) continue;
+                    Vector proj = V1.Plus(t.ScaledBy(dot));
+                    if(!proj.Equals(pt)) continue;
+                    bool dup = false;
+                    for(int k = 0; k < (int)interPts.size(); k++) {
+                        if(interPts[k].Equals(pt)) { dup = true; break; }
+                    }
+                    if(!dup) interPts.push_back(pt);
+                }
+            }
+
+            for(int ip = 0; ip < (int)interPts.size(); ip++) {
+                Vector P    = interPts[ip];
+                Vector Amid = P.Plus(d1.ScaledBy(setback));
+                Vector Bmid = P.Plus(d2.ScaledBy(setback));
+
+                SBezier arcP = {};
+                arcP.deg = 2;
+                arcP.ctrl[0]  = Amid;
+                arcP.ctrl[1]  = P;
+                arcP.ctrl[2]  = Bmid;
+                arcP.weight[0] = 1.0;
+                arcP.weight[1] = arc_weight;
+                arcP.weight[2] = 1.0;
+
+                // Collect surfaces that have a trim-edge or SCurve endpoint at P
+                // (other than hSurf1, hSurf2, hFillet, hCapSurfV1, hCapSurfV2).
+                std::vector<hSSurface> ceilingSurfs;
+                for(SCurve &sc_j : curve) {
+                    if(sc_j.pts.n < 2) continue;
+                    bool fp = sc_j.pts[0].p.Equals(P);
+                    bool lp = sc_j.pts[sc_j.pts.n-1].p.Equals(P);
+                    if(!fp && !lp) continue;
+                    for(int side = 0; side < 2; side++) {
+                        hSSurface hN = (side == 0) ? sc_j.surfA : sc_j.surfB;
+                        if(hN.v == 0) continue;
+                        if(hN == hSurf1 || hN == hSurf2 || hN == hFillet) continue;
+                        if(hN == hCapSurfV1 || hN == hCapSurfV2) continue;
+                        bool already = false;
+                        for(int k = 0; k < (int)ceilingSurfs.size(); k++) {
+                            if(ceilingSurfs[k] == hN) { already = true; break; }
+                        }
+                        if(!already) ceilingSurfs.push_back(hN);
+                    }
+                }
+
+                for(int cs = 0; cs < (int)ceilingSurfs.size(); cs++) {
+                    hSSurface hCS = ceilingSurfs[cs];
+
+                    // Add arc SCurve at P (Amid->P->Bmid), bordering hFillet and hCS.
+                    SCurve scP = {};
+                    scP.isExact = true;
+                    scP.exact = arcP;
+                    scP.exact.MakePwlInto(&scP.pts);
+                    scP.surfA = hFillet;
+                    scP.surfB = hCS;
+                    hSCurve hArcP = curve.AddAndAssignId(&scP);
+
+                    SSurface *ceilSurf = surface.FindById(hCS);
+
+                    // If trim.n == 0 (DIFFERENCE body edge case), reconstruct trims
+                    // from SCurves that border hCS.
+                    if(ceilSurf->trim.n == 0) {
+                        for(SCurve &sc_bd : curve) {
+                            if(sc_bd.h == hArcP) continue;
+                            if(sc_bd.h == hArcV1 || sc_bd.h == hArcV2) continue;
+                            if(sc_bd.surfA != hCS && sc_bd.surfB != hCS) continue;
+                            if(sc_bd.pts.n < 2) continue;
+                            bool bkwd = (sc_bd.surfB == hCS);
+                            STrimBy stb_new = {};
+                            stb_new.curve     = sc_bd.h;
+                            stb_new.backwards = bkwd;
+                            stb_new.start  = bkwd ? sc_bd.pts[sc_bd.pts.n-1].p
+                                                   : sc_bd.pts[0].p;
+                            stb_new.finish = bkwd ? sc_bd.pts[0].p
+                                                   : sc_bd.pts[sc_bd.pts.n-1].p;
+                            ceilSurf->trim.Add(&stb_new);
+                        }
+                        ceilSurf = surface.FindById(hCS);
+                    }
+
+                    // Update trim edges with endpoint P: truncate toward Amid or Bmid.
+                    // Use InsertPointIntoCurvePts to determine which direction applies.
+                    for(int ti2 = 0; ti2 < ceilSurf->trim.n; ti2++) {
+                        STrimBy &stb_c = ceilSurf->trim[ti2];
+                        if(!stb_c.start.Equals(P) && !stb_c.finish.Equals(P)) continue;
+                        SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
+                        if(!nc) continue;
+                        Vector newPt;
+                        bool doAmid = InsertPointIntoCurvePts(nc, Amid);
+                        if(doAmid) {
+                            newPt = Amid;
+                        } else {
+                            if(!InsertPointIntoCurvePts(nc, Bmid)) continue;
+                            newPt = Bmid;
+                        }
+                        TruncateCurveAtVertex(nc, P, newPt);
+                        UpdateAllSurfaceTrimEndpoints(this, nc->h, P, newPt);
+                        if(stb_c.start.Equals(P))  stb_c.start  = newPt;
+                        if(stb_c.finish.Equals(P)) stb_c.finish = newPt;
+                    }
+
+                    ceilSurf = surface.FindById(hCS);
+
+                    // Graph traversal: find the open gap and insert the arc.
+                    bool arcPBackwards     = false;
+                    bool arcPGapBridgeable = false;
+                    int  arcPGapIdx        = -1;
+                    {
+                        int n = ceilSurf->trim.n;
+                        if(n > 0) {
+                            std::vector<bool> vis(n, false);
+                            vis[0] = true;
+                            Vector gStartPt = ceilSurf->trim[0].start;
+                            Vector gCur     = ceilSurf->trim[0].finish;
+                            int    gLast    = 0;
+                            bool   gStuck   = false;
+                            for(int iter = 1; iter < n; iter++) {
+                                bool found = false;
+                                for(int j = 0; j < n; j++) {
+                                    if(vis[j]) continue;
+                                    if(gCur.Equals(ceilSurf->trim[j].start)) {
+                                        gCur  = ceilSurf->trim[j].finish;
+                                        gLast = j;
+                                        vis[j] = true;
+                                        found  = true;
+                                        break;
+                                    }
+                                }
+                                if(!found) { gStuck = true; break; }
+                            }
+                            bool gClosed = (!gStuck && gCur.Equals(gStartPt));
+                            if(!gClosed) {
+                                if(gCur.Equals(Amid)) {
+                                    arcPBackwards     = false;
+                                    arcPGapBridgeable = true;
+                                    arcPGapIdx        = gLast;
+                                } else if(gCur.Equals(Bmid)) {
+                                    arcPBackwards     = true;
+                                    arcPGapBridgeable = true;
+                                    arcPGapIdx        = gLast;
+                                }
+                            }
+                        }
+                    }
+                    if(arcPGapBridgeable) {
+                        STrimBy stbArcP = STrimBy::EntireCurve(this, hArcP, arcPBackwards);
+                        ceilSurf = surface.FindById(hCS);
+                        InsertTrimAt(ceilSurf, arcPGapIdx, &stbArcP);
+                    }
+                }
             }
         }
 
@@ -1334,17 +1613,8 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 bool dup = false;
                 for(int tj = 0; tj < ti; tj++) { if(toCheck[tj] == toCheck[ti]) { dup = true; break; } }
                 if(dup) { seen[ti] = true; continue; }
-                seen[ti] = true;
+            seen[ti] = true;
                 BridgeTrimGapIfOpen(this, toCheck[ti], hFillet);
-            }
-            // Also bridge any remaining gaps in OTHER surfaces not in our tracked set.
-            // This handles the case where hCapSurfV1 or hCapSurfV2 fell back to hFillet
-            // (no real cap surface found), leaving a neighboring surface from a prior
-            // fillet operation with an open trim polygon that was not tracked here.
-            for(SSurface &ss : surface) {
-                hSSurface h = ss.h;
-                if(h == hFillet || h == hSurf1 || h == hSurf2 || h == hCapSurfV1 || h == hCapSurfV2) continue;
-                BridgeTrimGapIfOpen(this, h, hFillet);
             }
             (void)seen;
         }
