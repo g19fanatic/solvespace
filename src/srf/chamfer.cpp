@@ -1080,7 +1080,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
             // Composite score: geometric alignment (0..2) + trim.n>0 bonus (0 or 1).
             // Prefer external surfaces (trim.n>0) over internal ASSEMBLE faces.
             double geoScore = fabs(nCand.Dot(t));
-            double score = geoScore * 2.0 + (sCand->trim.n > 0 ? 1.0 : 0.0);
+            double score = geoScore * 2.0 + (sCand->trim.n == 0 ? 1.0 : 0.0);
             if(touchesV1 && score > capV1Score) {
                 capV1Score = score;
                 hCapSurfV1 = hCand;
@@ -1278,8 +1278,11 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     // Edge arrives at V1: direction = last_pt - second_to_last_pt
                     Vector edgeDir = nc2->pts[nc2->pts.n-1].p.Minus(
                                      nc2->pts[nc2->pts.n-2].p).WithMagnitude(1);
-                    double b0s = edgeDir.Dot((B0.Minus(V1)).WithMagnitude(1));
-                    double a0s = edgeDir.Dot((A0.Minus(V1)).WithMagnitude(1));
+                    // For an ARRIVING edge, the correct setback point lies BEHIND V1
+                    // (between edge.start and V1), i.e. in the REVERSE edge direction.
+                    // Use -edgeDir to find the point in the backward direction from V1.
+                    double b0s = edgeDir.ScaledBy(-1.0).Dot((B0.Minus(V1)).WithMagnitude(1));
+                    double a0s = edgeDir.ScaledBy(-1.0).Dot((A0.Minus(V1)).WithMagnitude(1));
                     if(a0s > b0s) stitchTarget = A0;
                 } else {
                     // Edge leaves V1: direction = pts[1] - pts[0]
@@ -1288,11 +1291,41 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     double a0s = edgeDir.Dot((A0.Minus(V1)).WithMagnitude(1));
                     if(a0s > b0s) stitchTarget = A0;
                 }
-                hSCurve hStitch = AddLinearCurve(this, V1, stitchTarget,
-                                                 hFillet, hCapSurfV1);
-                capSurf1 = surface.FindById(hCapSurfV1);
-                STrimBy stbSt = STrimBy::EntireCurve(this, hStitch, false);
-                capSurf1->trim.Add(&stbSt);
+                // Truncate the shared SCurve at V1→stitchTarget using the same
+                // TruncateCurveAtVertex + UpdateAllSurfaceTrimEndpoints approach
+                // used by the main trim-update loop. This ensures ALL surfaces that
+                // reference nc2 (including box1's side face in ASSEMBLE geometry)
+                // get their V1 endpoint updated to stitchTarget — fixing broken trim
+                // boundaries that would otherwise cause inverted/backfacing triangles.
+                if(stb_v.finish.Equals(V1)) {
+                    // Trim arrives at V1: truncate curve stb_v.start→V1 to stb_v.start→stitchTarget.
+                    if(InsertPointIntoCurvePts(nc2, stitchTarget)) {
+                        TruncateCurveAtVertex(nc2, V1, stitchTarget);
+                        UpdateAllSurfaceTrimEndpoints(this, nc2->h, V1, stitchTarget);
+                        capSurf1 = surface.FindById(hCapSurfV1);
+                    }
+                    else {
+                        // stitchTarget not on curve (e.g. A0 is orthogonal to edge).
+                        // Fall back to AddLinearCurve to replace the trim endpoint.
+                        hSCurve hExt = AddLinearCurve(this, stb_v.start, stitchTarget, hFillet, hCapSurfV1);
+                        capSurf1 = surface.FindById(hCapSurfV1);
+                        capSurf1->trim[ti].curve = hExt;
+                        capSurf1->trim[ti].finish = stitchTarget;
+                    }
+                } else {
+                    // Trim leaves V1: truncate curve V1→stb_v.finish to stitchTarget→stb_v.finish.
+                    if(InsertPointIntoCurvePts(nc2, stitchTarget)) {
+                        TruncateCurveAtVertex(nc2, V1, stitchTarget);
+                        UpdateAllSurfaceTrimEndpoints(this, nc2->h, V1, stitchTarget);
+                        capSurf1 = surface.FindById(hCapSurfV1);
+                    }
+                    else {
+                        hSCurve hExt = AddLinearCurve(this, stitchTarget, stb_v.finish, hFillet, hCapSurfV1);
+                        capSurf1 = surface.FindById(hCapSurfV1);
+                        capSurf1->trim[ti].curve = hExt;
+                        capSurf1->trim[ti].start = stitchTarget;
+                    }
+                }
                 stitchAdded = true;
             }
         }
@@ -1339,15 +1372,111 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     if(!found) { gStuck = true; break; }
                 }
            bool gClosed = (!gStuck && gCur.Equals(gStartPt));
-               if(!gClosed) {
-                    if(gCur.Equals(A0))      { arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
-                    else if(gCur.Equals(B0)) { arcV1Backwards = true;  arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+              if(!gClosed) {
+                   if(gCur.Equals(A0))      { arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+                   else if(gCur.Equals(B0)) { arcV1Backwards = true;  arcV1GapBridgeable = true; arcV1GapIdx = gLast; }
+              }
+          }
+      }
+        arcV1GapBridgeable = false; // Always use greedy to ensure correct array order
+        if(!arcV1GapBridgeable) {
+            for(int i = 0; i < capSurf1->trim.n; i++) {
+                if(capSurf1->trim[i].finish.Equals(A0)) {
+                    arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = i; break;
+                }
+                if(capSurf1->trim[i].finish.Equals(B0)) {
+                    arcV1Backwards = true; arcV1GapBridgeable = true; arcV1GapIdx = i; break;
+                }
+                if(capSurf1->trim[i].start.Equals(A0)) {
+                    std::swap(capSurf1->trim[i].start, capSurf1->trim[i].finish);
+                    capSurf1->trim[i].backwards = !capSurf1->trim[i].backwards;
+                    arcV1Backwards = false; arcV1GapBridgeable = true; arcV1GapIdx = i; break;
+                }
+                if(capSurf1->trim[i].start.Equals(B0)) {
+                    std::swap(capSurf1->trim[i].start, capSurf1->trim[i].finish);
+                    capSurf1->trim[i].backwards = !capSurf1->trim[i].backwards;
+                    arcV1Backwards = true; arcV1GapBridgeable = true; arcV1GapIdx = i; break;
                 }
             }
+            // Direct scan found a trim ending at A0/B0, but InsertTrimAt only places
+            // the arc correctly if the next trim in array order starts at the other
+            // arc endpoint. Reset bridgeable so the greedy assembly below rebuilds
+            // the array in proper connectivity order.
+            arcV1GapBridgeable = false;
         }
-        if(arcV1GapBridgeable) {
-            STrimBy stbArc1 = STrimBy::EntireCurve(this, hArcV1, arcV1Backwards);
-            InsertTrimAt(capSurf1, arcV1GapIdx, &stbArc1);
+        // Bidirectional greedy assembly for capSurf1:
+        // If graph traversal and direct scan both failed, or direct scan found an index
+        // but trim array is not in connectivity order, use the same robust multi-start
+        // greedy approach as capSurf2. Try each starting trim until we find a chain
+        // ending at A0 or B0, then rebuild trim array in connectivity order so
+        // InsertTrimAt places the arc at the correct position.
+        if(!arcV1GapBridgeable) {
+            int n1 = capSurf1->trim.n;
+            if(n1 > 0) {
+                std::vector<bool> used1(n1, false);
+                std::vector<int>  pass1Ord1, pass2Ord1;
+                bool go1b = false;
+                Vector gCur1b;
+                bool p1AtA0 = false, p1AtB0 = false;
+                for(int startTi = 0; startTi < n1 && !p1AtA0 && !p1AtB0; startTi++) {
+                    std::fill(used1.begin(), used1.end(), false);
+                    pass1Ord1.clear(); pass2Ord1.clear();
+                    used1[startTi] = true;
+                    pass1Ord1.push_back(startTi);
+                    gCur1b = capSurf1->trim[startTi].finish;
+                    go1b = true;
+                    while(go1b) {
+                        go1b = false;
+                        for(int j = 0; j < n1; j++) {
+                            if(used1[j]) continue;
+                            if(gCur1b.Equals(capSurf1->trim[j].start)) {
+                                gCur1b = capSurf1->trim[j].finish;
+                                used1[j] = true; pass1Ord1.push_back(j); go1b = true; break;
+                            } else if(gCur1b.Equals(capSurf1->trim[j].finish)) {
+                                std::swap(capSurf1->trim[j].start, capSurf1->trim[j].finish);
+                                capSurf1->trim[j].backwards = !capSurf1->trim[j].backwards;
+                                gCur1b = capSurf1->trim[j].finish;
+                                used1[j] = true; pass1Ord1.push_back(j); go1b = true; break;
+                            }
+                        }
+                    }
+                    p1AtA0 = gCur1b.Equals(A0); p1AtB0 = gCur1b.Equals(B0);
+                    if(p1AtA0 || p1AtB0) {
+                        Vector arcOther1 = p1AtA0 ? B0 : A0;
+                        Vector gCur3b = arcOther1;
+                        go1b = true;
+                        while(go1b) {
+                            go1b = false;
+                            for(int j = 0; j < n1; j++) {
+                                if(used1[j]) continue;
+                                if(gCur3b.Equals(capSurf1->trim[j].start)) {
+                                    gCur3b = capSurf1->trim[j].finish;
+                                    used1[j] = true; pass2Ord1.push_back(j); go1b = true; break;
+                                } else if(gCur3b.Equals(capSurf1->trim[j].finish)) {
+                                    std::swap(capSurf1->trim[j].start, capSurf1->trim[j].finish);
+                                    capSurf1->trim[j].backwards = !capSurf1->trim[j].backwards;
+                                    gCur3b = capSurf1->trim[j].finish;
+                                    used1[j] = true; pass2Ord1.push_back(j); go1b = true; break;
+                                }
+                            }
+                        }
+                        List<STrimBy> newT1 = {};
+                        for(int ci : pass1Ord1) newT1.Add(&capSurf1->trim[ci]);
+                        for(int ci : pass2Ord1) newT1.Add(&capSurf1->trim[ci]);
+                        for(int j = 0; j < n1; j++) if(!used1[j]) newT1.Add(&capSurf1->trim[j]);
+                        capSurf1->trim.Clear();
+                        for(int i = 0; i < newT1.n; i++) capSurf1->trim.Add(&newT1[i]);
+                        newT1.Clear();
+                        arcV1GapIdx        = (int)pass1Ord1.size() - 1;
+                        arcV1Backwards     = p1AtB0;
+                        arcV1GapBridgeable = true;
+                    }
+                } // close for(startTi)
+            }
+        }
+       if(arcV1GapBridgeable) {
+           STrimBy stbArc1 = STrimBy::EntireCurve(this, hArcV1, arcV1Backwards);
+           InsertTrimAt(capSurf1, arcV1GapIdx, &stbArc1);
         }
     }
     if(hCapSurfV2 != hFillet) {
@@ -1371,6 +1500,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
             // For boolean-difference bodies, the endcap may have trim.n == 0 because
             // UpdateAllSurfaceTrimEndpoints had nothing to update (empty trim list).
             // In that case, reconstruct trims from SCurves bordering hCapSurfV2 (excl. hArcV2).
+            bool didReconV2 = false;
             if(capSurf2->trim.n == 0) {
                 for(SCurve &sc_bd : curve) {
                     if(sc_bd.h == hArcV2) continue;
@@ -1383,6 +1513,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     stb_new.start  = bkwd ? sc_bd.pts[sc_bd.pts.n-1].p : sc_bd.pts[0].p;
                     stb_new.finish = bkwd ? sc_bd.pts[0].p : sc_bd.pts[sc_bd.pts.n-1].p;
                     capSurf2->trim.Add(&stb_new);
+                    didReconV2 = true;
                 }
             }
             bool arcV2Backwards = false;
@@ -1412,8 +1543,87 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     if(!gClosed) {
                         if(gCur.Equals(A1))      { arcV2Backwards = false; arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
                         else if(gCur.Equals(B1)) { arcV2Backwards = true;  arcV2GapBridgeable = true; arcV2GapIdx = gLast; }
+                }
+            }
+        }
+            // RECON bidirectional greedy assembly:
+            // If traversal failed, some trims may be stored backwards or in wrong
+            // order. Use two greedy passes to build a correctly-oriented, contiguous
+            // chain: pass1 extends from trim[0].finish toward A1 or B1, flipping
+            // individual trims as needed; pass2 extends from the other arc endpoint
+            // to orient remaining trims. Rebuilds the trim array in connectivity
+            // order so InsertTrimAt places the arc at the correct position.
+            if(!arcV2GapBridgeable) {
+                int n2 = capSurf2->trim.n;
+                if(n2 > 0) {
+                    // Try each trim as starting point until pass1 reaches A1 or B1.
+                    // This handles surfaces with multiple trim loops (e.g. outer
+                    // rectangle + inner hole boundary for a through-hole pocket).
+                    std::vector<bool> used2(n2, false);
+                    std::vector<int>  pass1Ord, pass2Ord;
+                    bool go2 = false;
+                    Vector gCur2;
+                    bool p1AtA1_pre = false, p1AtB1_pre = false;
+                    for(int startTi = 0; startTi < n2 && !p1AtA1_pre && !p1AtB1_pre; startTi++) {
+                    std::fill(used2.begin(), used2.end(), false);
+                    pass1Ord.clear(); pass2Ord.clear();
+                    used2[startTi] = true;
+                    pass1Ord.push_back(startTi);
+                    gCur2 = capSurf2->trim[startTi].finish;
+                    go2 = true;
+                    while(go2) {
+                        go2 = false;
+                        for(int j = 0; j < n2; j++) {
+                            if(used2[j]) continue;
+                            if(gCur2.Equals(capSurf2->trim[j].start)) {
+                                gCur2 = capSurf2->trim[j].finish;
+                                used2[j] = true; pass1Ord.push_back(j); go2 = true; break;
+                            } else if(gCur2.Equals(capSurf2->trim[j].finish)) {
+                                std::swap(capSurf2->trim[j].start, capSurf2->trim[j].finish);
+                                capSurf2->trim[j].backwards = !capSurf2->trim[j].backwards;
+                                gCur2 = capSurf2->trim[j].finish;
+                                used2[j] = true; pass1Ord.push_back(j); go2 = true; break;
+                            }
+                        }
+                    }
+                    bool p1AtA1 = gCur2.Equals(A1), p1AtB1 = gCur2.Equals(B1);
+                    p1AtA1_pre = p1AtA1; p1AtB1_pre = p1AtB1;
+                    if(p1AtA1 || p1AtB1) {
+                        // Pass 2: greedy from the other arc endpoint, correctly
+                        // orienting remaining trims for the post-arc chain.
+                        Vector arcOther = p1AtA1 ? B1 : A1;
+                        Vector gCur3 = arcOther;
+                        go2 = true;
+                        while(go2) {
+                            go2 = false;
+                            for(int j = 0; j < n2; j++) {
+                                if(used2[j]) continue;
+                                if(gCur3.Equals(capSurf2->trim[j].start)) {
+                                    gCur3 = capSurf2->trim[j].finish;
+                                    used2[j] = true; pass2Ord.push_back(j); go2 = true; break;
+                                } else if(gCur3.Equals(capSurf2->trim[j].finish)) {
+                                    std::swap(capSurf2->trim[j].start, capSurf2->trim[j].finish);
+                                    capSurf2->trim[j].backwards = !capSurf2->trim[j].backwards;
+                                    gCur3 = capSurf2->trim[j].finish;
+                                    used2[j] = true; pass2Ord.push_back(j); go2 = true; break;
+                                }
+                            }
+                        }
+                        // Rebuild trim array: [pass1 chain] [pass2 chain] [any remaining]
+                        // This ensures connectivity order matches array order for InsertTrimAt.
+                        List<STrimBy> newT = {};
+                        for(int ci : pass1Ord) newT.Add(&capSurf2->trim[ci]);
+                        for(int ci : pass2Ord) newT.Add(&capSurf2->trim[ci]);
+                        for(int j = 0; j < n2; j++) if(!used2[j]) newT.Add(&capSurf2->trim[j]);
+                        capSurf2->trim.Clear();
+                        for(int i = 0; i < newT.n; i++) capSurf2->trim.Add(&newT[i]);
+                        newT.Clear();
+                        arcV2GapIdx     = (int)pass1Ord.size() - 1;
+                        arcV2Backwards  = p1AtB1;
+                        arcV2GapBridgeable = true;
                     }
                 }
+                } // close for(startTi)
             }
             if(arcV2GapBridgeable) {
                 STrimBy stbArc2 = STrimBy::EntireCurve(this, hArcV2, arcV2Backwards);

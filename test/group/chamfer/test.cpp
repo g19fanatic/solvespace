@@ -3306,7 +3306,6 @@ TEST_CASE(fillet_diff_endcap_has_triangles) {
     CHECK_TRUE(endcapTriCount > 0);
 }
 
-//-----------------------------------------------------------------------------
 // TDD test: fillet_assemble_cap_no_backface
 //
 // Scenario: Box1 (20x20x80) with a smaller ASSEMBLE boss (10x10x10) on top.
