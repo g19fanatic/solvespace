@@ -1371,9 +1371,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
             // For boolean-difference bodies, the endcap may have trim.n == 0 because
             // UpdateAllSurfaceTrimEndpoints had nothing to update (empty trim list).
             // In that case, reconstruct trims from SCurves bordering hCapSurfV2 (excl. hArcV2).
-            bool didReconV2 = false;
             if(capSurf2->trim.n == 0) {
-                didReconV2 = true;
                 for(SCurve &sc_bd : curve) {
                     if(sc_bd.h == hArcV2) continue;
                     if(sc_bd.surfA != hCapSurfV2 && sc_bd.surfB != hCapSurfV2) continue;
@@ -1385,13 +1383,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     stb_new.start  = bkwd ? sc_bd.pts[sc_bd.pts.n-1].p : sc_bd.pts[0].p;
                     stb_new.finish = bkwd ? sc_bd.pts[0].p : sc_bd.pts[sc_bd.pts.n-1].p;
                     capSurf2->trim.Add(&stb_new);
-                    fprintf(stderr, "RECON: sc=%u bkwd=%d s=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f)\n",
-                            sc_bd.h.v, (int)bkwd,
-                            stb_new.start.x, stb_new.start.y, stb_new.start.z,
-                            stb_new.finish.x, stb_new.finish.y, stb_new.finish.z);
                 }
-                fprintf(stderr, "RECON_DONE: n=%d A1=(%.3f,%.3f,%.3f) B1=(%.3f,%.3f,%.3f)\n",
-                        capSurf2->trim.n, A1.x, A1.y, A1.z, B1.x, B1.y, B1.z);
             }
             bool arcV2Backwards = false;
             bool arcV2GapBridgeable = false;
@@ -1423,7 +1415,6 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     }
                 }
             }
-            (void)didReconV2;
             if(arcV2GapBridgeable) {
                 STrimBy stbArc2 = STrimBy::EntireCurve(this, hArcV2, arcV2Backwards);
                 InsertTrimAt(capSurf2, arcV2GapIdx, &stbArc2);
