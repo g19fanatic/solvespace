@@ -11,7 +11,7 @@ boolean operations.
 - **Website**: https://solvespace.com
 - **Repository**: https://github.com/solvespace/solvespace
 - **Version**: 3.2 (see `CMakeLists.txt:57`)
-- **Git hash at this checkout**: f854b536 (latest: fix: Repair open trim polygons in chamfer/fillet caps)
+- **Git hash at this checkout**: b524199e (fix: Remove debug fprintf instrumentation from chamfer/fillet)
 - **License**: GNU GPL v3 or later (`COPYING.txt`)
 
 ---

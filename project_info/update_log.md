@@ -58,3 +58,53 @@
 - `project_info/subsystems/sketch.md` — no sketch data model changes
 - `project_info/subsystems/ui.md` — textscreens.cpp chamfer UI already documented
 - `project_info/subsystems/platform.md` — no platform changes
+
+## Refresh: Apr 7, 2026 (git 96df040d)
+
+### Trigger
+`/init --refresh` after 2 commits landed on top of the last doc update (f854b536):
+- `4594b7c4` docs: (doc-only update, already integrated into project_info at last refresh)
+- `96df040d` fix(WIP!): Correct cap selection and trim repair for DIFF/ASSEMBLE fillets
+
+### Files Updated
+
+#### `project_info/overview.md`
+- Updated git hash from `f854b536` → `96df040d`
+- Updated description: "fix: Repair open trim polygons in chamfer/fillet caps" → "WIP: Correct cap selection and trim repair for DIFF/ASSEMBLE fillets"
+
+#### `project_info/context-strategy.md`
+- Updated `src/srf/chamfer.cpp` size from `1366 lines` → `1636 lines`
+- Updated test.cpp entry from `63 tests (2863 lines)` → `77 tests`
+- Updated key subsystem doc description to mention Step 16, DIFF geometry support, and cap scoring
+
+#### `project_info/subsystems/chamfer-fillet.md` (major update)
+- `chamfer.cpp` size: `1366 lines` → `1636 lines`
+- Added Step 16: Handle surfaces with intermediate vertices on the shared edge V1V2 (`chamfer.cpp:1433`)
+- Added RECON path description to algorithm: `trim.n==0` path for DIFF internal surface endcap reconstruction via graph traversal (`chamfer.cpp:~1388`)
+- Added cap candidate scoring description to Step 10: selection by `|normal.Dot(t)|` instead of first-match (`chamfer.cpp:~1062`)
+- Added note: ASSEMBLE stitch for third-surface trim edges ending at V1
+- Added note: Removed broad `BridgeTrimGapIfOpen` fallback over ALL surfaces (replaced by targeted per-surface calls)
+- Updated test count: `63 tests` → `77 tests` (+14 new fillet_diff_* tests)
+- Added new test categories:
+  - `fillet_diff_*` no-crash tests (12 tests via `CreateBoxWithCutout`/`CreateBoxWithCutoutFromBottom`)
+  - `fillet_diff_endcap_has_triangles` (endcap triangle assertion)
+  - `fillet_assemble_cap_no_backface` (ASSEMBLE backface geometry check)
+- Added new test helpers to helper function table:
+  - `FindPointNear` (`test.cpp:1588`)
+  - `CreateBoxWithCutout` (`test.cpp:1600`)
+  - `CreateBoxWithCutoutFromBottom` (`test.cpp:1684`)
+- Added WIP state note: 2 debug `fprintf` statements remain (`RECON:`, `RECON_DONE:` — WIP state)
+- Updated build note: `63 tests, 0 failures` → `77 tests, 0 failures (test count as of 96df040d)`
+
+#### `project_info/todos.md`
+- Updated chamfer-fillet.md status description to reflect 77 tests, Step 16, and DIFF geometry support
+
+### Preserved (no changes needed)
+- `project_info/architecture.md` — no structural changes
+- `project_info/tech-stack.md` — no new dependencies
+- `project_info/code-patterns.md` — no new patterns
+- `project_info/build-notes.md` — no build system changes
+- `project_info/subsystems/solver.md` — no solver changes
+- `project_info/subsystems/sketch.md` — no sketch data model changes
+- `project_info/subsystems/ui.md` — no UI changes
+- `project_info/subsystems/platform.md` — no platform changes

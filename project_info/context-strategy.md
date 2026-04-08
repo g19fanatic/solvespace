@@ -134,18 +134,18 @@ task-specific files.
 
 | File | Lines of interest | Why |
 |------|------------------|-----|
-| `src/srf/chamfer.cpp` | full (~960 lines) | Core algorithm: `MakeFromChamferOf`, `MakeFromFilletOf`, helpers |
+| `src/srf/chamfer.cpp` | full (1636 lines) | Core algorithm: `MakeFromChamferOf`, `MakeFromFilletOf`, helpers |
 | `src/groupmesh.cpp` | `389–437` | CHAMFER/FILLET dispatch in `GenerateShellAndMesh` + ASSEMBLE-skip fix |
 | `src/group.cpp` | `324–362` | `MenuGroup` command handlers for GROUP_CHAMFER / GROUP_FILLET |
 | `src/sketch.h` | `186–191`, `313–319` | `Group::Type::CHAMFER=5400`, `FILLET=5401`; `REMAP_CHAMFER_FACE=1011`, `REMAP_FILLET_FACE=1012` |
 | `src/srf/surface.h` | `432–436` | `MakeFromChamferOf` / `MakeFromFilletOf` declarations; `int tag` on `SCurve` |
 | `src/textscreens.cpp` | `488–517`, `948–985` | `ShowGroupInfo` CHAMFER/FILLET panels; edit control handlers |
 | `src/ui.h` | `157–161`, `372–378`, `512–513` | `Command::GROUP_CHAMFER/FILLET`; `Edit::CHAMFER_OFFSET/FILLET_RADIUS` |
-| `test/group/chamfer/test.cpp` | full (2863 lines) | **63 tests**: basic, mesh, chaining, stale-vertex, backface, origin-line regression |
+| `test/group/chamfer/test.cpp` | full (2863 lines) | **77 tests**: basic, mesh, chaining, stale-vertex, backface, origin-line regression, DIFF no-crash, DIFF endcap triangles, ASSEMBLE backface |
 
-**Key subsystem doc**: `project_info/subsystems/chamfer-fillet.md` — full 15-step algorithm, 7 helper functions, 63-test coverage summary, ASSEMBLE-skip design rationale, backface/origin-line regression notes.
+**Key subsystem doc**: `project_info/subsystems/chamfer-fillet.md` — full 16-step algorithm, 7 helper functions, 77-test coverage summary (DIFF/ASSEMBLE fillet tests added), cap scoring via |normal.Dot(t)|, DIFF endcap reconstruction (RECON path), Step 16 (intermediate vertices on shared edge), ASSEMBLE-skip design rationale, backface/origin-line regression notes.
 
-**Debug note**: All `CHAMFER_DEBUG` lines have been stripped (0 remaining). No action needed.
+**Debug note**: `CHAMFER_DEBUG` lines stripped; 2 `fprintf` debug statements remain in WIP state (`RECON:` and `RECON_DONE:` at ~chamfer.cpp:1388–1393).
 
 ---
 

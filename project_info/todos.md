@@ -21,7 +21,7 @@
 | `project_info/subsystems/sketch.md` | Sketch data model, handle system (hGroup/hEntity/hConstraint/hRequest), IdList, Group/Request/Entity/Constraint/Param types and lifecycles | ✅ Complete |
 | `project_info/subsystems/ui.md` | TextWindow (Printf DSL, Screen enum, Edit enum, link callbacks) and GraphicsWindow (projection, Selection/Hover, Pending ops, mouse flow, display toggles) | ✅ Complete |
 | `project_info/subsystems/platform.md` | Platform abstraction layer: Platform::Window, Timer, Settings, FileDialog, Window, rendering backends, CLI commands, utility subsystems | ✅ Complete |
-| `project_info/subsystems/chamfer-fillet.md` | CHAMFER/FILLET group types, 7 helper functions, 15-step algorithm, ASSEMBLE-skip fix, BridgeTrimGapIfOpen repair sweep, 63-test coverage summary, backface/origin-line regressions | ✅ Updated (Apr 6) |
+| `project_info/subsystems/chamfer-fillet.md` | CHAMFER/FILLET group types, 7 helper functions + 3 test helpers, 16-step algorithm (Step 16: intermediate vertices on shared edge), DIFF internal RECON path, cap scoring by \|normal.Dot(t)\|, ASSEMBLE-skip fix, BridgeTrimGapIfOpen repair sweep, 77-test coverage summary (14 new fillet_diff_* tests), backface/origin-line regressions | ✅ Updated (Apr 7) |
 | `project_info/build-notes.md` | FORCE_VENDORED_LIBS cmake option, FindPkgConfig workaround for cmake 3.22, libjson-c-dev startup fix, standard build recipe | ✅ Complete |
 | `project_info/todos.md` | This file — session tracking, cross-links, suggestions | ✅ Complete |
 
