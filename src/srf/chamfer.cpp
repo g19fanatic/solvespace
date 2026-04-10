@@ -565,6 +565,20 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         chamferSurfPtr->trim.Add(&stb);
     }
 
+    // Pre-compute: skip neighbor curves bordering a non-flat (curved) cap surface
+    // (e.g. a prior fillet).  Modifying such curves via UpdateAllSurfaceTrimEndpoints
+    // would corrupt the curved surface's trim chain.  The resulting gaps on surf1/surf2
+    // will be handled by BridgeTrimGapIfOpen + corner post-processing.
+    bool skipCapV1Curves = false, skipCapV2Curves = false;
+    if(hCapSurfV1 != hChamfer) {
+        SSurface *cs1 = surface.FindById(hCapSurfV1);
+        skipCapV1Curves = (cs1->degm != 1 || cs1->degn != 1);
+    }
+    if(hCapSurfV2 != hChamfer) {
+        SSurface *cs2 = surface.FindById(hCapSurfV2);
+        skipCapV2Curves = (cs2->degm != 1 || cs2->degn != 1);
+    }
+
     // Step 12: update surf1 trim
     // Find the STrimBy in surf1 that references sharedSC.
     // Replace it with a reference to hCurve1.
@@ -624,6 +638,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(stb_n.curve == hCurve1) continue;  // skip the one we just replaced
 
             SCurve *nc = curve.FindByIdNoOops(stb_n.curve);
+            if(nc && skipCapV1Curves && (nc->surfA == hCapSurfV1 || nc->surfB == hCapSurfV1)) continue;
+            if(nc && skipCapV2Curves && (nc->surfA == hCapSurfV2 || nc->surfB == hCapSurfV2)) continue;
 
             if(stb_n.start.Equals(V1)) {
                 if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_n.start = A; }
@@ -679,6 +695,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(stb_n.curve == hCurve2) continue;
 
             SCurve *nc = curve.FindByIdNoOops(stb_n.curve);
+            if(nc && skipCapV1Curves && (nc->surfA == hCapSurfV1 || nc->surfB == hCapSurfV1)) continue;
+            if(nc && skipCapV2Curves && (nc->surfA == hCapSurfV2 || nc->surfB == hCapSurfV2)) continue;
 
             if(stb_n.start.Equals(V1)) {
                 if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_n.start = D; }
@@ -700,6 +718,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     // start/finish endpoints and add the cap curve as a new trim entry.
     if(hCapSurfV1 != hChamfer) {
         SSurface *capSurf1 = surface.FindById(hCapSurfV1);
+        bool capSurf1IsFlat = (capSurf1->degm == 1 && capSurf1->degn == 1);
+        if(capSurf1IsFlat) {
         for(STrimBy &stb_c : capSurf1->trim) {
             SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
             if(!nc) continue;
@@ -750,9 +770,12 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             STrimBy stbCap1 = STrimBy::EntireCurve(this, hCapV1, capV1Backwards);
             InsertTrimAt(capSurf1, capV1GapIdx, &stbCap1);
         }
+        }
     }
     if(hCapSurfV2 != hChamfer) {
         SSurface *capSurf2 = surface.FindById(hCapSurfV2);
+        bool capSurf2IsFlat = (capSurf2->degm == 1 && capSurf2->degn == 1);
+        if(capSurf2IsFlat) {
         for(STrimBy &stb_c : capSurf2->trim) {
             SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
             if(!nc) continue;
@@ -801,6 +824,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             STrimBy stbCap2 = STrimBy::EntireCurve(this, hCapV2, capV2Backwards);
             InsertTrimAt(capSurf2, capV2GapIdx, &stbCap2);
         }
+        }
     }
 
     // Bridge any remaining trim gaps in the surfaces we modified.
@@ -823,6 +847,182 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         (void)seen;
     }
 
+    // Post-process: when BridgeTrimGapIfOpen created bridges for a prior chamfer flat surface,
+    // the corner vertex V1 used as a bridge endpoint may not lie on hChamfer's surface,
+    // causing wrong UV projections.  Fix: if two bridges share a common corner vertex V1
+    // (pTo of one bridge == pFrom of another), create a flat corner triangle surface
+    // (A0-V1-B0) that correctly borders the two side surfaces and hChamfer via
+    // properly-surfaced curves (NC1, NC2, NC3).
+    {
+        // Collect bridges: linear 2-pt curves with surfA==hChamfer, not yet in
+        // hChamfer's trim, but present in some other surface's trim.
+        struct BridgeInfo {
+            hSCurve   h;
+            Vector    pFrom;   // pts[0] = gapEnd
+            Vector    pTo;     // pts[1] = gapStart
+            hSSurface otherH;  // surface that owns this bridge in its trim
+        };
+        std::vector<BridgeInfo> bridges;
+        for(SCurve &sc_br : curve) {
+            if(sc_br.surfA != hChamfer) continue;
+            if(sc_br.pts.n != 2) continue;
+            SSurface *hChamferSurf0 = surface.FindById(hChamfer);
+            bool inChamfer = false;
+            for(int k = 0; k < hChamferSurf0->trim.n; k++) {
+                if(hChamferSurf0->trim[k].curve == sc_br.h) { inChamfer = true; break; }
+            }
+            if(inChamfer) continue;
+            hSSurface otherH = {};
+            for(SSurface &ss_br : surface) {
+                if(ss_br.h == hChamfer) continue;
+                for(int k = 0; k < ss_br.trim.n; k++) {
+                    if(ss_br.trim[k].curve == sc_br.h) { otherH = ss_br.h; break; }
+                }
+                if(otherH.v != 0) break;
+            }
+            if(otherH.v == 0) continue;
+            BridgeInfo bi = {};
+            bi.h      = sc_br.h;
+            bi.pFrom  = sc_br.pts[0].p;
+            bi.pTo    = sc_br.pts[1].p;
+            bi.otherH = otherH;
+            bridges.push_back(bi);
+        }
+
+        // Look for a pair of bridges sharing a corner vertex V1.
+        // Two bridge-connection patterns are handled:
+        //   (a) Fillet-style: bridge bB ends AT V1 (pTo=V1), bridge bA starts FROM V1 (pFrom=V1)
+        //       → corners: V1 = bridges[bB].pTo = bridges[bA].pFrom
+        //   (b) Chamfer-style: BOTH bridges start FROM V1 (pFrom=V1)
+        //       → corners: V1 = bridges[i].pFrom = bridges[j].pFrom
+        //   In case (b) the bridge[bB]→NC1 replacement uses NC1 reversed, since bridge[bB]
+        //   goes V1→A0 (pFrom=V1, pTo=A0) while NC1 goes A0→V1.
+        bool cornerHandled = false;
+        for(int i = 0; i < (int)bridges.size() && i < 8 && !cornerHandled; i++) {
+            for(int j = i+1; j < (int)bridges.size() && j < 8 && !cornerHandled; j++) {
+                int bA = -1, bB = -1;
+                bool bFromCorner = false;
+                bool bToCorner = false;
+                if(bridges[i].pTo.Equals(bridges[j].pFrom)) {
+                    bB = i; bA = j;
+                } else if(bridges[j].pTo.Equals(bridges[i].pFrom)) {
+                    bB = j; bA = i;
+                } else if(bridges[i].pFrom.Equals(bridges[j].pFrom)) {
+                    // Chamfer case: both bridges emanate FROM the same corner V1.
+                    bFromCorner = true; bB = i; bA = j;
+                } else if(bridges[i].pTo.Equals(bridges[j].pTo)) {
+                    // Mixed case: both bridges end AT the same corner V1.
+                    bToCorner = true; bB = i; bA = j;
+                }
+                if(bA < 0) continue;
+
+                cornerHandled = true;
+                // For bFromCorner: cornerV1=pFrom (shared), A0=bB.pTo, B0=bA.pTo.
+                // For bToCorner:   cornerV1=pTo (shared),   A0=bB.pFrom, B0=bA.pFrom.
+                // For fillet-style: cornerV1=bB.pTo, A0=bB.pFrom, B0=bA.pTo.
+                Vector cornerV1   = bFromCorner ? bridges[bB].pFrom :
+                                    bToCorner   ? bridges[bB].pTo   : bridges[bB].pTo;
+                Vector A0         = bFromCorner ? bridges[bB].pTo   :
+                                    bToCorner   ? bridges[bB].pFrom : bridges[bB].pFrom;
+                Vector B0         = bToCorner   ? bridges[bA].pFrom : bridges[bA].pTo;
+                hSSurface hSurfA0 = bridges[bB].otherH;
+                hSSurface hSurfB0 = bridges[bA].otherH;
+
+                SSurface cornerSurf = SSurface::FromPlane(
+                    cornerV1,
+                    A0.Minus(cornerV1),
+                    B0.Minus(cornerV1));
+                // bFromCorner (chamfer-style): all three points are in the same
+                // plane as the top cap; swap uDir/vDir to get the correct outward normal.
+                // bToCorner (mixed case): same geometry as bFromCorner — normal swap needed.
+                if(bFromCorner || bToCorner) cornerSurf = SSurface::FromPlane(
+                    cornerV1, B0.Minus(cornerV1), A0.Minus(cornerV1));
+                cornerSurf.color = surface.FindById(hChamfer)->color;
+                hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
+                // Re-lookup after reallocation:
+                surface.FindById(hChamfer);
+
+                hSCurve hNC1 = AddLinearCurve(this, A0, cornerV1, hCorner, hSurfA0);
+                hSCurve hNC2 = AddLinearCurve(this, cornerV1, B0, hCorner, hSurfB0);
+                hSCurve hNC3 = AddLinearCurve(this, A0, B0, hCorner, hChamfer);
+
+                SSurface *ssA0 = surface.FindById(hSurfA0);
+
+                // When skipCapV1Curves was active (cap is curved, e.g. prior fillet), the
+                // fillet-border curves still run all the way to V1.  NC1/NC2 create new
+                // edges at A0/B0, so the mesh needs shared vertices there.  Instead of
+                // truncating (which would propagate to the fillet surface via
+                // UpdateAllSurfaceTrimEndpoints and break it), just INSERT A0/B0 as
+                // intermediate points.  The mesh triangulator will then place a vertex
+                // at A0/B0, giving both surfaces a matching edge at that point.
+                if(skipCapV1Curves) {
+                    for(STrimBy &stb_fix : ssA0->trim) {
+                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                        if(!nc_fix) continue;
+                        if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
+                        InsertPointIntoCurvePts(nc_fix, A0);
+                    }
+                    SSurface *ssB0_fix = surface.FindById(hSurfB0);
+                    for(STrimBy &stb_fix : ssB0_fix->trim) {
+                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                        if(!nc_fix) continue;
+                        if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
+                        InsertPointIntoCurvePts(nc_fix, B0);
+                    }
+                }
+
+                for(int ti = 0; ti < ssA0->trim.n; ti++) {
+                    if(ssA0->trim[ti].curve == bridges[bB].h) {
+                        // bFromCorner: bridge goes V1→A0, NC1 goes A0→V1 → use NC1 reversed.
+                        // fillet-style: bridge goes A0→V1, NC1 also A0→V1 → use NC1 forward.
+                        ssA0->trim[ti] = STrimBy::EntireCurve(this, hNC1, bFromCorner); break;
+                    }
+                }
+                SSurface *ssB0 = surface.FindById(hSurfB0);
+                for(int ti = 0; ti < ssB0->trim.n; ti++) {
+                    if(ssB0->trim[ti].curve == bridges[bA].h) {
+                        ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false); break;
+                    }
+                }
+
+                // Replace cap edge in hChamfer's trim with NC3_rev (B0→A0).
+                // For chamfer (flat surface), the cap edge is a 2-pt straight line,
+                // so we use pts.n < 2 (not < 3) to allow matching 2-pt cap edges.
+                // Direction: NC3 pts[0]=A0, pts[1]=B0. The original cap edge hCapV1
+                // is traversed forward (A→D). When A0 matches pts[0] of the cap edge,
+                // NC3 forward gives the same direction → use backwards=false.
+                // When A0 matches pts[n-1], NC3 reversed gives the same direction → backwards=true.
+                SSurface *hChamferSurf = surface.FindById(hChamfer);
+                bool capEdgeFound = false;
+                for(int ai = 0; ai < hChamferSurf->trim.n; ai++) {
+                    SCurve *ac = curve.FindByIdNoOops(hChamferSurf->trim[ai].curve);
+                    if(!ac || ac->pts.n < 2) continue;
+                    if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
+                        bool matchedAtStart = ac->pts[0].p.Equals(A0);
+                        hChamferSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, !matchedAtStart);
+                        capEdgeFound = true;
+                        break;
+                    }
+                }
+                (void)capEdgeFound;
+
+                // Build cornerSurf's trim
+                //   NC2 fwd  (V1→B0): in UV goes (0,0)→(1,0)
+                //   NC3 bwd  (B0→A0): in UV goes (1,0)→(0,1)  [diagonal]
+                //   NC1 fwd  (A0→V1): in UV goes (0,1)→(0,0)
+                SSurface *hCornerSurf = surface.FindById(hCorner);
+                STrimBy  stb;
+                stb = STrimBy::EntireCurve(this, hNC2, false); // V1→B0
+                hCornerSurf->trim.Add(&stb);
+                hCornerSurf = surface.FindById(hCorner);
+                stb = STrimBy::EntireCurve(this, hNC3, true);  // B0→A0 (NC3 reversed)
+                hCornerSurf->trim.Add(&stb);
+                hCornerSurf = surface.FindById(hCorner);
+                stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
+                hCornerSurf->trim.Add(&stb);
+            }
+        }
+    }
     // Step 14: remove old shared SCurve
     // Safety: verify no surface trim still references hSharedSC before removing.
     for(SSurface &ss : surface) {
@@ -1237,6 +1437,8 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
         //   hCapSurfV2 trims: V2->A1 (surf1-side) or V2->B1 (surf2-side); add hArcV2
         if(hCapSurfV1 != hFillet) {
             SSurface *capSurf1 = surface.FindById(hCapSurfV1);
+            bool capSurf1IsFlat = (capSurf1->degm == 1 && capSurf1->degn == 1);
+            if(capSurf1IsFlat) {
             for(STrimBy &stb_c : capSurf1->trim) {
                 SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
                 if(!nc) continue;
@@ -1478,9 +1680,12 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
            STrimBy stbArc1 = STrimBy::EntireCurve(this, hArcV1, arcV1Backwards);
            InsertTrimAt(capSurf1, arcV1GapIdx, &stbArc1);
         }
+        }  // closes if(capSurf1IsFlat)
     }
     if(hCapSurfV2 != hFillet) {
         SSurface *capSurf2 = surface.FindById(hCapSurfV2);
+        bool capSurf2IsFlat = (capSurf2->degm == 1 && capSurf2->degn == 1);
+        if(capSurf2IsFlat) {
         for(STrimBy &stb_c : capSurf2->trim) {
             SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
             if(!nc) continue;
@@ -1630,6 +1835,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 InsertTrimAt(capSurf2, arcV2GapIdx, &stbArc2);
             }
         }
+    } // closes if(hCapSurfV2 != hFillet)
 
         // Step 16: Handle surfaces with intermediate vertices on V1V2.
         // When another surface (e.g. the pocket ceiling in a DIFFERENCE body)
@@ -1818,6 +2024,145 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 BridgeTrimGapIfOpen(this, toCheck[ti], hFillet);
             }
             (void)seen;
+        }
+
+        // Post-process: when BridgeTrimGapIfOpen created bridges for curved cap surfaces
+        // (e.g. a prior fillet cylinder), the corner vertex V1 used as a bridge endpoint
+        // may not lie on hFillet's surface, causing wrong UV projections.  Fix: if two
+        // bridges share a common corner vertex V1 (pTo of one bridge == pFrom of another),
+        // create a flat corner triangle surface (A0-V1-B0) that correctly borders h=7,
+        // h=5 and h=8 via properly-surfaced curves (NC1, NC2, NC3).  This gives the
+        // triangulator vertices that are all on their respective surfaces.
+        {
+            // Collect bridges: linear 2-pt curves with surfA==hFillet, not yet in
+            // hFillet's trim, but present in some other surface's trim.
+            struct BridgeInfo {
+                hSCurve   h;
+                Vector    pFrom;   // pts[0] = gapEnd
+                Vector    pTo;     // pts[1] = gapStart
+                hSSurface otherH;  // surface that owns this bridge in its trim
+            };
+            std::vector<BridgeInfo> bridges;
+            for(SCurve &sc_br : curve) {
+                if(sc_br.surfA != hFillet) continue;
+                if(sc_br.pts.n != 2) continue;
+                SSurface *hFilletSurf0 = surface.FindById(hFillet);
+                bool inFillet = false;
+                for(int k = 0; k < hFilletSurf0->trim.n; k++) {
+                    if(hFilletSurf0->trim[k].curve == sc_br.h) { inFillet = true; break; }
+                }
+                if(inFillet) continue;
+                hSSurface otherH = {};
+                for(SSurface &ss_br : surface) {
+                    if(ss_br.h == hFillet) continue;
+                    for(int k = 0; k < ss_br.trim.n; k++) {
+                        if(ss_br.trim[k].curve == sc_br.h) { otherH = ss_br.h; break; }
+                    }
+                    if(otherH.v != 0) break;
+                }
+                if(otherH.v == 0) continue;
+                BridgeInfo bi = {};
+                bi.h      = sc_br.h;
+                bi.pFrom  = sc_br.pts[0].p;
+                bi.pTo    = sc_br.pts[1].p;
+                bi.otherH = otherH;
+                bridges.push_back(bi);
+            }
+
+            // Look for a pair of bridges sharing a corner vertex V1.
+            // If found: build a flat corner triangle surface to fill the gap.
+            for(int i = 0; i < (int)bridges.size() && i < 8; i++) {
+                for(int j = i+1; j < (int)bridges.size() && j < 8; j++) {
+                    // Check whether bridges[i].pTo == bridges[j].pFrom (V1 shared)
+                    // or bridges[j].pTo == bridges[i].pFrom.
+                    int bA = -1, bB = -1;  // bA: pFrom==V1, bB: pTo==V1
+                    if(bridges[i].pTo.Equals(bridges[j].pFrom)) {
+                        bB = i;  // bridges[bB].pTo = V1
+                        bA = j;  // bridges[bA].pFrom = V1
+                    } else if(bridges[j].pTo.Equals(bridges[i].pFrom)) {
+                        bB = j;
+                        bA = i;
+                    }
+                    if(bA < 0) continue;
+
+                    Vector cornerV1 = bridges[bB].pTo;   // == bridges[bA].pFrom == V1
+                    Vector A0       = bridges[bB].pFrom;
+                    Vector B0       = bridges[bA].pTo;
+                    hSSurface hSurfA0 = bridges[bB].otherH;  // h=7 (has bridge to V1)
+                    hSSurface hSurfB0 = bridges[bA].otherH;  // h=5 (has bridge from V1)
+
+                    // Create flat corner triangle surface FromPlane(V1, A0-V1, B0-V1).
+                    // UV: V1=(0,0), A0=(0,1), B0=(1,0). Correct CCW winding: V1→B0→A0→V1.
+                    SSurface cornerSurf = SSurface::FromPlane(
+                        cornerV1,
+                        A0.Minus(cornerV1),  // u direction: V1→A0
+                        B0.Minus(cornerV1)); // v direction: V1→B0
+                    cornerSurf.color = surface.FindById(hFillet)->color;
+                    hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
+                    // Re-lookup after reallocation:
+                    surface.FindById(hFillet);
+
+                    // Create NC1 (A0→V1): shared between hCorner and hSurfA0.
+                    // In hSurfA0 (h=7): replaces bridge[bB] (same path, correct surfA).
+                    hSCurve hNC1 = AddLinearCurve(this, A0, cornerV1, hCorner, hSurfA0);
+
+                    // Create NC2 (V1→B0): shared between hCorner and hSurfB0.
+                    // In hSurfB0 (h=5): replaces bridge[bA] (same path, correct surfA).
+                    hSCurve hNC2 = AddLinearCurve(this, cornerV1, B0, hCorner, hSurfB0);
+
+                    // Create NC3 (A0→B0): shared between hCorner and hFillet.
+                    // Both A0 and B0 are on hFillet's surface; NC3 replaces hArcV1 in
+                    // hFillet's trim with a straight line that triangulates correctly.
+                    hSCurve hNC3 = AddLinearCurve(this, A0, B0, hCorner, hFillet);
+
+                    // Re-lookup after curve additions:
+                    SSurface *ssA0 = surface.FindById(hSurfA0);
+                    // Replace bridge[bB] in hSurfA0 with NC1 (A0→V1).
+                    for(int ti = 0; ti < ssA0->trim.n; ti++) {
+                        if(ssA0->trim[ti].curve == bridges[bB].h) {
+                            ssA0->trim[ti] = STrimBy::EntireCurve(this, hNC1, false);
+                            break;
+                        }
+                    }
+
+                    SSurface *ssB0 = surface.FindById(hSurfB0);
+                    // Replace bridge[bA] in hSurfB0 with NC2 (V1→B0).
+                    for(int ti = 0; ti < ssB0->trim.n; ti++) {
+                        if(ssB0->trim[ti].curve == bridges[bA].h) {
+                            ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false);
+                            break;
+                        }
+                    }
+
+                    // Replace arc hArcV1 in hFillet's trim with NC3_rev (B0→A0).
+                    // The arc (pts[0]=A0, pts[last]=B0) is identified by pFrom=A0.
+                    SSurface *hFilletSurf = surface.FindById(hFillet);
+                    for(int ai = 0; ai < hFilletSurf->trim.n; ai++) {
+                        SCurve *ac = curve.FindByIdNoOops(hFilletSurf->trim[ai].curve);
+                        if(!ac || ac->pts.n < 3) continue;
+                        if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
+                            // Replace with NC3 reversed (B0→A0).
+                            hFilletSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, true);
+                            break;
+                        }
+                    }
+
+                    // Build cornerSurf's trim (CCW winding in UV: V1→B0→A0→V1):
+                    //   NC2 fwd  (V1→B0): in UV goes (0,0)→(1,0)
+                    //   NC3 bwd  (B0→A0): in UV goes (1,0)→(0,1)  [diagonal]
+                    //   NC1 fwd  (A0→V1): in UV goes (0,1)→(0,0)
+                    SSurface *hCornerSurf = surface.FindById(hCorner);
+                    STrimBy  stb;
+                    stb = STrimBy::EntireCurve(this, hNC2, false); // V1→B0
+                    hCornerSurf->trim.Add(&stb);
+                    hCornerSurf = surface.FindById(hCorner);
+                    stb = STrimBy::EntireCurve(this, hNC3, true);  // B0→A0 (NC3 reversed)
+                    hCornerSurf->trim.Add(&stb);
+                    hCornerSurf = surface.FindById(hCorner);
+                    stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
+                    hCornerSurf->trim.Add(&stb);
+                }
+            }
         }
 
         // Safety: verify no surface trim still references hSharedSC before removing.
