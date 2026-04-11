@@ -3407,6 +3407,50 @@ TEST_CASE(chamfer_double_chamfer_no_naked_edges) {
 }
 
 //-----------------------------------------------------------------------------
+// TDD test: mixed_chamfer_fillet_no_naked_edges
+//
+// Chamfer 1: front face (0,-1,0) + top cap → chamfers top-front horizontal edge
+// Fillet 2: front face (0,-1,0) + left face (-1,0,0) → fillets front-left vertical edge
+//
+// Before fix: fillet2 mesh has naked edges (leaks=true).
+// After fix:  mesh is watertight (leaks=false).
+//-----------------------------------------------------------------------------
+TEST_CASE(mixed_chamfer_fillet_no_naked_edges) {
+    hGroup extrudeH = CreateBoxExtrude();
+    Group *eg = SK.GetGroup(extrudeH);
+    CHECK_TRUE(eg != nullptr);
+
+    hEntity frontFace = FindFaceByNormal(extrudeH, Vector::From(0, -1, 0));
+    hEntity topCap    = FindCapFace(extrudeH, /*wantTop=*/true);
+    hEntity leftFace  = FindFaceByNormal(extrudeH, Vector::From(-1, 0, 0));
+    CHECK_TRUE(frontFace.v != 0);
+    CHECK_TRUE(topCap.v != 0);
+    CHECK_TRUE(leftFace.v != 0);
+
+    // Apply chamfer first, then fillet (mixed — reverse order)
+    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    CHECK_FALSE(SK.GetGroup(chamfer1H)->booleanFailed);
+
+    hGroup fillet2H = AddFilletGroup(chamfer1H, frontFace, leftFace, 2.0);
+    Group *g2 = SK.GetGroup(fillet2H);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    // Check the final mesh for naked edges (watertightness).
+    // Before fix: leaks=true (naked edges); After fix: leaks=false.
+    g2->GenerateDisplayItems();
+    SMesh *m = &g2->displayMesh;
+    SKdNode *root = SKdNode::From(m);
+    SEdgeList el = {};
+    bool inters, leaks;
+    root->MakeCertainEdgesInto(&el,
+        EdgeKind::NAKED_OR_SELF_INTER, /*coplanarIsInter=*/true,
+        &inters, &leaks);
+    el.Clear();
+    CHECK_FALSE(leaks);  // No naked edges -- mesh must be watertight
+}
+
+//-----------------------------------------------------------------------------
 // TDD test: mixed_fillet_chamfer_no_naked_edges
 //
 // Fillet 1: front face (0,-1,0) + top cap → fillets top-front horizontal edge
