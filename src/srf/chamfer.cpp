@@ -636,7 +636,24 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 if(!bS1 && !bS2) continue;
                 if(stb_s.start.Equals(V1) || stb_s.finish.Equals(V1)) {
                     Vector pt = bS1 ? A : D;
-                    if(!CanInsertPointIntoCurvePts(nc, pt)) { skipCapV1Curves = true; break; }
+                    if(!CanInsertPointIntoCurvePts(nc, pt)) {
+                        // Directional discriminator: the failing curve's direction
+                        // from V1 determines whether this is a doubleop diagonal
+                        // (direction aligns with pt) or an adjacent-chamfer diagonal
+                        // (direction aligns with the opposite setback).
+                        Vector pOther = stb_s.start.Equals(V1) ? stb_s.finish : stb_s.start;
+                        Vector curveDir = pOther.Minus(V1);
+                        Vector dirPt  = pt.Minus(V1);
+                        Vector dirOpp = (bS1 ? D : A).Minus(V1);
+                        double magPt  = dirPt.Magnitude();
+                        double magOpp = dirOpp.Magnitude();
+                        double dotPt  = (magPt  > LENGTH_EPS) ? fabs(curveDir.Dot(dirPt.WithMagnitude(1.0)))  : 0;
+                        double dotOpp = (magOpp > LENGTH_EPS) ? fabs(curveDir.Dot(dirOpp.WithMagnitude(1.0))) : 0;
+                        if(dotPt > dotOpp) {
+                            skipCapV1Curves = true; break;
+                        }
+                        // else: adjacent chamfer — don't skip
+                    }
                 }
             }
         }
@@ -652,7 +669,23 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 if(!bS1 && !bS2) continue;
                 if(stb_s.start.Equals(V2) || stb_s.finish.Equals(V2)) {
                     Vector pt = bS1 ? B : C;
-                    if(!CanInsertPointIntoCurvePts(nc, pt)) { skipCapV2Curves = true; break; }
+                    if(!CanInsertPointIntoCurvePts(nc, pt)) {
+                        // Directional discriminator (V2 variant): same logic as V1.
+                        // For V2, the setback points are B (bS1) or C (bS2),
+                        // and the opposite setbacks are C (bS1) or B (bS2).
+                        Vector pOther = stb_s.start.Equals(V2) ? stb_s.finish : stb_s.start;
+                        Vector curveDir = pOther.Minus(V2);
+                        Vector dirPt  = pt.Minus(V2);
+                        Vector dirOpp = (bS1 ? C : B).Minus(V2);
+                        double magPt  = dirPt.Magnitude();
+                        double magOpp = dirOpp.Magnitude();
+                        double dotPt  = (magPt  > LENGTH_EPS) ? fabs(curveDir.Dot(dirPt.WithMagnitude(1.0)))  : 0;
+                        double dotOpp = (magOpp > LENGTH_EPS) ? fabs(curveDir.Dot(dirOpp.WithMagnitude(1.0))) : 0;
+                        if(dotPt > dotOpp) {
+                            skipCapV2Curves = true; break;
+                        }
+                        // else: adjacent chamfer — don't skip
+                    }
                 }
             }
         }
@@ -1250,7 +1283,9 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
     // Reject concave edges: if n1·n2 > 0 then cosAngle < 0, meaning the
     // faces form a reflex (>180°) dihedral angle. Fillet is only supported
     // on convex edges.
-    if(cosAngle < 0) {
+    // Use a small negative tolerance to handle floating-point rounding: for a
+    // perfect 90° edge, cosAngle should be 0 but can round to ~-5.5e-17.
+    if(cosAngle < -LENGTH_EPS) {
         booleanFailed = true;
         return;
     }
