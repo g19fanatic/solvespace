@@ -61,6 +61,44 @@ static bool InsertPointIntoCurvePts(SCurve *sc, Vector P) {
 }
 
 //-----------------------------------------------------------------------------
+// Helper: read-only check whether InsertPointIntoCurvePts would succeed.
+// Returns true if P already exists in the curve or lies on one of its
+// piecewise-linear segments. Does NOT modify the curve.
+//-----------------------------------------------------------------------------
+static bool CanInsertPointIntoCurvePts(SCurve *sc, Vector P) {
+    for(int i = 0; i < sc->pts.n; i++) {
+        if(sc->pts[i].p.Equals(P)) return true;
+    }
+    for(int i = 0; i < sc->pts.n - 1; i++) {
+        Vector a = sc->pts[i].p;
+        Vector b = sc->pts[i+1].p;
+        Vector ab = b.Minus(a);
+        double len = ab.Magnitude();
+        if(len < LENGTH_EPS) continue;
+
+        Vector ap = P.Minus(a);
+        double t = ap.Dot(ab) / (len * len);
+        if(t < LENGTH_EPS/len || t > 1.0 - LENGTH_EPS/len) continue;
+
+        Vector closest = a.Plus(ab.ScaledBy(t));
+        if(!closest.Equals(P)) continue;
+
+        return true;
+    }
+    return false;
+}
+
+//-----------------------------------------------------------------------------
+// Helper: check if a curve's pts array contains point P (exact match only).
+//-----------------------------------------------------------------------------
+static bool CurvePtsContain(SCurve *sc, Vector P) {
+    for(int i = 0; i < sc->pts.n; i++) {
+        if(sc->pts[i].p.Equals(P)) return true;
+    }
+    return false;
+}
+
+//-----------------------------------------------------------------------------
 // Helper: truncate a curve's pts so it ends at `newEnd` instead of `oldEnd`.
 // Called after InsertPointIntoCurvePts to remove the stale original corner
 // vertex (V1 or V2) from the pts array of a neighboring curve.
@@ -516,7 +554,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             // still wins on geoScore (|n.Dot(t)|=1) vs side faces (geoScore~0).
             double geoScore = fabs(nCand.Dot(t));
             double score = geoScore * 2.0 + (sCand->trim.n > 0 ? 1.0 : 0.0);
-            if(touchesV1 && score > capV1Score) {
+            if(touchesV1 && score >= capV1Score) {
+                capV1Score = score;
                 hCapSurfV1 = hCand;
             }
             if(touchesV2 && score > capV2Score) {
@@ -577,6 +616,46 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     if(hCapSurfV2 != hChamfer) {
         SSurface *cs2 = surface.FindById(hCapSurfV2);
         skipCapV2Curves = (cs2->degm != 1 || cs2->degn != 1);
+    }
+
+
+    // Pre-scan: check whether hCapSurfV1/V2's OWN trims contain a curve passing
+    // through V1/V2 that borders hSurf1/hSurf2 where the setback point can't be
+    // inserted.  This mirrors the bridge-skip guard logic to correctly
+    // differentiate doubleop cases (prior chamfer on SAME face → shares V1 in
+    // its own pts) from adjacent-edge cases (prior chamfer on a DIFFERENT edge →
+    // V1 not in its own curve pts).
+    if(!skipCapV1Curves && hCapSurfV1 != hChamfer) {
+        SSurface *capS1 = surface.FindById(hCapSurfV1);
+        if(capS1->degm == 1 && capS1->degn == 1) {
+            for(STrimBy &stb_s : capS1->trim) {
+                SCurve *nc = curve.FindByIdNoOops(stb_s.curve);
+                if(!nc) continue;
+                bool bS1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
+                bool bS2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
+                if(!bS1 && !bS2) continue;
+                if(stb_s.start.Equals(V1) || stb_s.finish.Equals(V1)) {
+                    Vector pt = bS1 ? A : D;
+                    if(!CanInsertPointIntoCurvePts(nc, pt)) { skipCapV1Curves = true; break; }
+                }
+            }
+        }
+    }
+    if(!skipCapV2Curves && hCapSurfV2 != hChamfer) {
+        SSurface *capS2 = surface.FindById(hCapSurfV2);
+        if(capS2->degm == 1 && capS2->degn == 1) {
+            for(STrimBy &stb_s : capS2->trim) {
+                SCurve *nc = curve.FindByIdNoOops(stb_s.curve);
+                if(!nc) continue;
+                bool bS1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
+                bool bS2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
+                if(!bS1 && !bS2) continue;
+                if(stb_s.start.Equals(V2) || stb_s.finish.Equals(V2)) {
+                    Vector pt = bS1 ? B : C;
+                    if(!CanInsertPointIntoCurvePts(nc, pt)) { skipCapV2Curves = true; break; }
+                }
+            }
+        }
     }
 
     // Step 12: update surf1 trim
@@ -719,7 +798,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     if(hCapSurfV1 != hChamfer) {
         SSurface *capSurf1 = surface.FindById(hCapSurfV1);
         bool capSurf1IsFlat = (capSurf1->degm == 1 && capSurf1->degn == 1);
-        if(capSurf1IsFlat) {
+        if(capSurf1IsFlat && !skipCapV1Curves) {
         for(STrimBy &stb_c : capSurf1->trim) {
             SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
             if(!nc) continue;
@@ -775,7 +854,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     if(hCapSurfV2 != hChamfer) {
         SSurface *capSurf2 = surface.FindById(hCapSurfV2);
         bool capSurf2IsFlat = (capSurf2->degm == 1 && capSurf2->degn == 1);
-        if(capSurf2IsFlat) {
+        if(capSurf2IsFlat && !skipCapV2Curves) {
         for(STrimBy &stb_c : capSurf2->trim) {
             SCurve *nc = curve.FindByIdNoOops(stb_c.curve);
             if(!nc) continue;
@@ -842,6 +921,36 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             for(int tj = 0; tj < ti; tj++) { if(toCheck[tj] == toCheck[ti]) { dup = true; break; } }
             if(dup) { seen[ti] = true; continue; }
             seen[ti] = true;
+            // Skip bridging for flat cap surfaces (not hSurf1/hSurf2) that share
+            // curves passing through V1/V2 with hSurf1/hSurf2 where the setback
+            // point can't be inserted. Such surfaces are prior chamfers that
+            // would get a DUPLICATE bridge with identical geometry, causing
+            // A0==B0 degeneracy in corner post-processing.
+            // NOTE: We check curve pts directly (not STrimBy start/finish) because
+            // V1/V2 may be intermediate points inserted by a prior chamfer.
+            if(toCheck[ti] != hSurf1 && toCheck[ti] != hSurf2) {
+                SSurface *capChk = surface.FindById(toCheck[ti]);
+                if(capChk->degm == 1 && capChk->degn == 1) {
+                    bool sharesDiag = false;
+                    for(STrimBy &stb_chk : capChk->trim) {
+                        SCurve *nc_chk = curve.FindByIdNoOops(stb_chk.curve);
+                        if(!nc_chk) continue;
+                        bool bS1 = (nc_chk->surfA == hSurf1 || nc_chk->surfB == hSurf1);
+                        bool bS2 = (nc_chk->surfA == hSurf2 || nc_chk->surfB == hSurf2);
+                        if(!bS1 && !bS2) continue;
+                        // Check if curve passes through V1 or V2 via its pts array
+                        if(CurvePtsContain(nc_chk, V1)) {
+                            Vector pt = bS1 ? A : D;
+                            if(!CanInsertPointIntoCurvePts(nc_chk, pt)) { sharesDiag = true; break; }
+                        }
+                        if(CurvePtsContain(nc_chk, V2)) {
+                            Vector pt = bS1 ? B : C;
+                            if(!CanInsertPointIntoCurvePts(nc_chk, pt)) { sharesDiag = true; break; }
+                        }
+                    }
+                    if(sharesDiag) continue;
+                }
+            }
             BridgeTrimGapIfOpen(this, toCheck[ti], hChamfer);
         }
         (void)seen;

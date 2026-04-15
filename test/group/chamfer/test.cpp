@@ -3493,3 +3493,236 @@ TEST_CASE(mixed_fillet_chamfer_no_naked_edges) {
     el.Clear();
     CHECK_FALSE(leaks);  // No naked edges -- mesh must be watertight
 }
+
+//=============================================================================
+// Parametric double-op test infrastructure
+//
+// FaceSpec enum + GetFace() resolver + RunDoubleOpTest() helper.
+// Used by the comprehensive TDD tests below.
+//=============================================================================
+
+enum FaceSpec { FS_FRONT, FS_BACK, FS_LEFT, FS_RIGHT, FS_TOP, FS_BOTTOM };
+
+static hEntity GetFace(hGroup extrudeH, FaceSpec spec) {
+    switch(spec) {
+        case FS_FRONT:  return FindFaceByNormal(extrudeH, Vector::From(0, -1, 0));
+        case FS_BACK:   return FindFaceByNormal(extrudeH, Vector::From(0, 1, 0));
+        case FS_LEFT:   return FindFaceByNormal(extrudeH, Vector::From(-1, 0, 0));
+        case FS_RIGHT:  return FindFaceByNormal(extrudeH, Vector::From(1, 0, 0));
+        case FS_TOP:    return FindCapFace(extrudeH, /*wantTop=*/true);
+        case FS_BOTTOM: return FindCapFace(extrudeH, /*wantTop=*/false);
+    }
+    return {};
+}
+
+static void RunDoubleOpTest(
+    Test::Helper *helper,  // Test helper for CHECK macros
+    FaceSpec sharedFace,   // Common face for both operations
+    FaceSpec partner1,     // Second face for op1 (shared edge with partner2 at a corner)
+    FaceSpec partner2,     // Second face for op2
+    bool op1_is_chamfer,   // true=chamfer, false=fillet
+    bool op2_is_chamfer,   // true=chamfer, false=fillet
+    double offset = 2.0)
+{
+    hGroup extrudeH = CreateBoxExtrude();
+    Group *eg = SK.GetGroup(extrudeH);
+    CHECK_TRUE(eg != nullptr);
+
+    hEntity face_shared   = GetFace(extrudeH, sharedFace);
+    hEntity face_partner1 = GetFace(extrudeH, partner1);
+    hEntity face_partner2 = GetFace(extrudeH, partner2);
+    CHECK_TRUE(face_shared.v != 0);
+    CHECK_TRUE(face_partner1.v != 0);
+    CHECK_TRUE(face_partner2.v != 0);
+
+    // Operation 1: shared face + partner1
+    hGroup op1H;
+    if(op1_is_chamfer) {
+        op1H = AddChamferGroup(extrudeH, face_shared, face_partner1, offset);
+    } else {
+        op1H = AddFilletGroup(extrudeH, face_shared, face_partner1, offset);
+    }
+    CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
+
+    // Operation 2: shared face + partner2
+    hGroup op2H;
+    if(op2_is_chamfer) {
+        op2H = AddChamferGroup(op1H, face_shared, face_partner2, offset);
+    } else {
+        op2H = AddFilletGroup(op1H, face_shared, face_partner2, offset);
+    }
+    Group *g2 = SK.GetGroup(op2H);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    // Generate mesh
+    g2->GenerateDisplayItems();
+    SMesh *m = &g2->displayMesh;
+
+    // Check 1: Mesh has triangles
+    CHECK_TRUE(m->l.n > 0);
+
+    // Check 2: Minimum triangle count (a box is 12 triangles, chamfer/fillet adds more)
+    CHECK_TRUE(m->l.n >= 12);
+
+    // Check 3 & 4: No naked edges and no self-intersections
+    SKdNode *root = SKdNode::From(m);
+    SEdgeList el = {};
+    bool inters, leaks;
+    root->MakeCertainEdgesInto(&el,
+        EdgeKind::NAKED_OR_SELF_INTER, /*coplanarIsInter=*/true,
+        &inters, &leaks);
+    el.Clear();
+    CHECK_FALSE(inters);  // No self-intersections
+    CHECK_FALSE(leaks);   // No naked edges -- mesh must be watertight
+}
+
+//=============================================================================
+// Group A, Corner TFR: Front face shared, top + right partners
+// Corner vertex: top-front-right = (20, 0, 80)
+//=============================================================================
+
+TEST_CASE(doubleop_front_top_right_FF) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_TOP, FS_RIGHT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_front_top_right_CC) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_TOP, FS_RIGHT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_front_top_right_CF) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_TOP, FS_RIGHT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_front_top_right_FC) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_TOP, FS_RIGHT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
+
+//=============================================================================
+// Group A, Corner BFL: Front face shared, bottom + left partners
+// Corner vertex: bottom-front-left = (0, 0, 0)
+//=============================================================================
+
+TEST_CASE(doubleop_front_bottom_left_FF) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_LEFT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_front_bottom_left_CC) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_LEFT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_front_bottom_left_CF) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_LEFT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_front_bottom_left_FC) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_LEFT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_front_bottom_right_FF) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_RIGHT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_front_bottom_right_CC) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_RIGHT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_front_bottom_right_CF) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_RIGHT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_front_bottom_right_FC) {
+    RunDoubleOpTest(helper, FS_FRONT, FS_BOTTOM, FS_RIGHT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_top_front_FF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_FRONT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_top_front_CC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_FRONT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_top_front_CF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_FRONT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_top_front_FC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_FRONT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_top_back_FF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_BACK,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_top_back_CC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_BACK,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_top_back_CF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_BACK,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_top_back_FC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_TOP, FS_BACK,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_bottom_front_FF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_FRONT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_bottom_front_CC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_FRONT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_bottom_front_CF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_FRONT,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_bottom_front_FC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_FRONT,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_bottom_back_FF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_BACK,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_bottom_back_CC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_BACK,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/true);
+}
+
+TEST_CASE(doubleop_left_bottom_back_CF) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_BACK,
+                    /*op1_chamfer=*/true, /*op2_chamfer=*/false);
+}
+
+TEST_CASE(doubleop_left_bottom_back_FC) {
+    RunDoubleOpTest(helper, FS_LEFT, FS_BOTTOM, FS_BACK,
+                    /*op1_chamfer=*/false, /*op2_chamfer=*/true);
+}
