@@ -1090,14 +1090,14 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
 
                 SSurface *ssA0 = surface.FindById(hSurfA0);
 
-                // When skipCapV1Curves was active (cap is curved, e.g. prior fillet), the
-                // fillet-border curves still run all the way to V1.  NC1/NC2 create new
-                // edges at A0/B0, so the mesh needs shared vertices there.  Instead of
-                // truncating (which would propagate to the fillet surface via
-                // UpdateAllSurfaceTrimEndpoints and break it), just INSERT A0/B0 as
-                // intermediate points.  The mesh triangulator will then place a vertex
+                // Insert A0/B0 as intermediate points into curves bordering the cap
+                // surfaces on ssA0/ssB0.  This is always needed (whether the cap is
+                // flat or curved) because NC1/NC2 create new edges at A0/B0, so the
+                // mesh needs shared vertices there.  We use INSERT (not truncate,
+                // which would propagate via UpdateAllSurfaceTrimEndpoints and break
+                // other surfaces).  The mesh triangulator will then place a vertex
                 // at A0/B0, giving both surfaces a matching edge at that point.
-                if(skipCapV1Curves) {
+                {
                     for(STrimBy &stb_fix : ssA0->trim) {
                         SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
                         if(!nc_fix) continue;
@@ -1109,6 +1109,24 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                         SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
                         if(!nc_fix) continue;
                         if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
+                        InsertPointIntoCurvePts(nc_fix, B0);
+                    }
+                }
+                // Also insert A0/B0 into curves bordering hCapSurfV2 on ssA0/ssB0,
+                // to prevent T-junction self-intersections on the V2 cap edge.
+                {
+                    SSurface *ssA0_v2 = surface.FindById(hSurfA0);
+                    for(STrimBy &stb_fix : ssA0_v2->trim) {
+                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                        if(!nc_fix) continue;
+                        if(nc_fix->surfA != hCapSurfV2 && nc_fix->surfB != hCapSurfV2) continue;
+                        InsertPointIntoCurvePts(nc_fix, A0);
+                    }
+                    SSurface *ssB0_v2 = surface.FindById(hSurfB0);
+                    for(STrimBy &stb_fix : ssB0_v2->trim) {
+                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                        if(!nc_fix) continue;
+                        if(nc_fix->surfA != hCapSurfV2 && nc_fix->surfB != hCapSurfV2) continue;
                         InsertPointIntoCurvePts(nc_fix, B0);
                     }
                 }
@@ -1137,11 +1155,18 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 SSurface *hChamferSurf = surface.FindById(hChamfer);
                 bool capEdgeFound = false;
                 for(int ai = 0; ai < hChamferSurf->trim.n; ai++) {
+                    // Only match cap edges (hCapV1/hCapV2), never side edges
+                    if(hChamferSurf->trim[ai].curve != hCapV1 &&
+                       hChamferSurf->trim[ai].curve != hCapV2) continue;
                     SCurve *ac = curve.FindByIdNoOops(hChamferSurf->trim[ai].curve);
                     if(!ac || ac->pts.n < 2) continue;
                     if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
-                        bool matchedAtStart = ac->pts[0].p.Equals(A0);
-                        hChamferSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, !matchedAtStart);
+                        // Account for trim's backwards flag when computing NC3 direction
+                        bool trimBkwd = hChamferSurf->trim[ai].backwards;
+                        int npts = ac->pts.n;
+                        Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
+                        bool nc3Backwards = !effectiveStart.Equals(A0);
+                        hChamferSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
                         capEdgeFound = true;
                         break;
                     }
@@ -2318,10 +2343,18 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     // Replace arc hArcV1 in hFillet's trim with NC3.
                     SSurface *hFilletSurf = surface.FindById(hFillet);
                     for(int ai = 0; ai < hFilletSurf->trim.n; ai++) {
+                        // Only match arc edges (hArcV1/hArcV2), never side edges
+                        if(hFilletSurf->trim[ai].curve != hArcV1 &&
+                           hFilletSurf->trim[ai].curve != hArcV2) continue;
                         SCurve *ac = curve.FindByIdNoOops(hFilletSurf->trim[ai].curve);
-                        if(!ac || ac->pts.n < 3) continue;
+                        if(!ac || ac->pts.n < 2) continue;
                         if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
-                            hFilletSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, !forkPattern);
+                            // Account for trim's backwards flag when computing NC3 direction
+                            bool trimBkwd = hFilletSurf->trim[ai].backwards;
+                            int npts = ac->pts.n;
+                            Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
+                            bool nc3Backwards = !effectiveStart.Equals(A0);
+                            hFilletSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
                             break;
                         }
                     }
@@ -2364,8 +2397,86 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                 if(sc) { sA = sc->surfA; sB = sc->surfB; npts = sc->pts.n; }
             }
         }
-
         curve.RemoveById(hSharedSC);
+    }
+
+    // Post-process: remove degenerate trims from ALL surfaces.
+    // A degenerate trim is a 2-point curve whose endpoints coincide (zero-length).
+    // This happens when a third-party surface (not in toCheck[]) gets a curve
+    // truncated to zero length during fillet processing. The degenerate trim
+    // breaks polygon assembly ("trim was empty"), causing naked edges.
+    // Only match pts.n == 2 (exactly 2 points) to avoid removing valid closed loops.
+    for(SSurface &ss : surface) {
+        for(int ti = ss.trim.n - 1; ti >= 0; ti--) {
+            SCurve *sc = curve.FindByIdNoOops(ss.trim[ti].curve);
+            if(!sc) continue;
+            if(sc->pts.n == 2 &&
+               sc->pts[0].p.Equals(sc->pts[1].p))
+            {
+                List<STrimBy> keep = {};
+                for(int ki = 0; ki < ss.trim.n; ki++) {
+                    if(ki != ti) keep.Add(&ss.trim[ki]);
+                }
+                ss.trim.Clear();
+                for(int ki = 0; ki < keep.n; ki++) ss.trim.Add(&keep[ki]);
+                keep.Clear();
+                break;  // restart outer loop will pick up next surface
+            }
+        }
+    }
+
+    // Second pass: collapse zero-area sliver surfaces.
+    // After removing degenerate trims, a surface may have exactly 2 remaining
+    // trims whose curves connect the same two endpoints in opposite directions.
+    // This forms a zero-area polygon that produces no mesh, leaving the boundary
+    // curves as naked edges. Fix by merging the two curves into one shared edge
+    // between the actual neighbor surfaces.
+    for(SSurface &ss : surface) {
+        if(ss.trim.n != 2) continue;
+
+        SCurve *sc0 = curve.FindByIdNoOops(ss.trim[0].curve);
+        SCurve *sc1 = curve.FindByIdNoOops(ss.trim[1].curve);
+        if(!sc0 || !sc1) continue;
+        if(sc0->pts.n < 2 || sc1->pts.n < 2) continue;
+
+        // Check if both curves connect the same two endpoints (reversed)
+        Vector p0s = sc0->pts[0].p, p0e = sc0->pts[sc0->pts.n-1].p;
+        Vector p1s = sc1->pts[0].p, p1e = sc1->pts[sc1->pts.n-1].p;
+        if(!(p0s.Equals(p1e) && p0e.Equals(p1s))) continue;
+        // Skip if both endpoints are the same (fully degenerate, already handled)
+        if(p0s.Equals(p0e)) continue;
+
+        // This is a zero-area sliver surface. Merge boundary curves.
+        hSSurface hDeg = ss.h;
+        hSCurve hKeep = ss.trim[0].curve;
+        hSCurve hRemove = ss.trim[1].curve;
+
+        SCurve *scKeep = curve.FindById(hKeep);
+        SCurve *scRemove = curve.FindById(hRemove);
+
+        // Find the "other" surface for each curve (not the degenerate one)
+        hSSurface otherKeep = (scKeep->surfA == hDeg) ? scKeep->surfB : scKeep->surfA;
+        hSSurface otherRemove = (scRemove->surfA == hDeg) ? scRemove->surfB : scRemove->surfA;
+
+        // Update scKeep: replace degenerate surface ref with otherRemove
+        if(scKeep->surfA == hDeg) scKeep->surfA = otherRemove;
+        else                      scKeep->surfB = otherRemove;
+
+        // In otherRemove's surface, find trim referencing hRemove, replace with hKeep.
+        // Since scKeep is the geometric reverse of scRemove, flip the backwards flag.
+        SSurface *ssOther = surface.FindByIdNoOops(otherRemove);
+        if(ssOther) {
+            for(int ti = 0; ti < ssOther->trim.n; ti++) {
+                if(ssOther->trim[ti].curve == hRemove) {
+                    bool oldBkwd = ssOther->trim[ti].backwards;
+                    ssOther->trim[ti] = STrimBy::EntireCurve(this, hKeep, !oldBkwd);
+                    break;
+                }
+            }
+        }
+
+        // Clear the degenerate surface's trims so it produces no mesh.
+        ss.trim.Clear();
     }
 }
 
