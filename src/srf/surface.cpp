@@ -416,6 +416,38 @@ void SSurface::MakeSectionEdgesInto(SShell *shell, SEdgeList *sel, SBezierList *
 void SSurface::TriangulateInto(SShell *shell, SMesh *sm) {
     SEdgeList el = {};
 
+    // Build a UV→XYZ snap map from all trim curve boundary points.
+    // When adjacent surfaces share a boundary curve, both surfaces project
+    // the same 3D curve point to their respective UV spaces via ClosestPointTo,
+    // then convert back via PointAt(). For curved surfaces (or off-surface
+    // trim points), this round-trip introduces floating-point error, causing
+    // shared boundary vertices to differ slightly between surfaces → naked edges.
+    // By snapping mesh vertices back to the original 3D curve points, both
+    // surfaces produce identical boundary vertices at shared edges.
+    struct SnapPt { double u, v; Vector xyz; };
+    std::vector<SnapPt> snapPts;
+    {
+        STrimBy *stb;
+        for(stb = trim.First(); stb; stb = trim.NextAfter(stb)) {
+            SCurve *sc = shell->curve.FindByIdNoOops(stb->curve);
+            if(!sc) continue;
+            bool inCurve = false;
+            int first = stb->backwards ? (sc->pts.n - 1) : 0;
+            int last  = stb->backwards ? 0 : (sc->pts.n - 1);
+            int inc   = stb->backwards ? -1 : 1;
+            for(int i = first; i != (last + inc); i += inc) {
+                Vector *pt = &(sc->pts[i].p);
+                if(pt->Equals(stb->start)) inCurve = true;
+                if(inCurve) {
+                    double su, sv;
+                    ClosestPointTo(*pt, &su, &sv);
+                    snapPts.push_back({su, sv, *pt});
+                }
+                if(pt->Equals(stb->finish)) inCurve = false;
+            }
+        }
+    }
+
     MakeEdgesInto(shell, &el, MakeAs::UV);
 
     SPolygon poly = {};
@@ -444,9 +476,21 @@ void SSurface::TriangulateInto(SShell *shell, SMesh *sm) {
             st->an = NormalAt(st->a.x, st->a.y);
             st->bn = NormalAt(st->b.x, st->b.y);
             st->cn = NormalAt(st->c.x, st->c.y);
-            st->a = PointAt(st->a.x, st->a.y);
-            st->b = PointAt(st->b.x, st->b.y);
-            st->c = PointAt(st->c.x, st->c.y);
+            // Convert UV→XYZ with boundary vertex snapping.
+            for(int v = 0; v < 3; v++) {
+                double pu = st->vertices[v].x, pv = st->vertices[v].y;
+                Vector converted = PointAt(pu, pv);
+                double bestDist = 1e-8;
+                for(const auto &sp : snapPts) {
+                    double du = pu - sp.u, dv = pv - sp.v;
+                    double d2 = du*du + dv*dv;
+                    if(d2 < bestDist) {
+                        bestDist = d2;
+                        converted = sp.xyz;
+                    }
+                }
+                st->vertices[v] = converted;
+            }
             // Works out that my chosen contour direction is inconsistent with
             // the triangle direction, sigh.
             st->FlipNormal();

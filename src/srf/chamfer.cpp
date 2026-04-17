@@ -2250,6 +2250,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
 
             // Look for a pair of bridges sharing a corner vertex V1.
             // If found: build a flat corner triangle surface to fill the gap.
+            bool cornerCreated = false;
             for(int i = 0; i < (int)bridges.size() && i < 8; i++) {
                 for(int j = i+1; j < (int)bridges.size() && j < 8; j++) {
                     // Check whether bridges[i].pTo == bridges[j].pFrom (V1 shared)
@@ -2285,6 +2286,9 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     }
                     hSSurface hSurfA0 = bridges[bB].otherH;  // h=7 (has bridge to V1)
                     hSSurface hSurfB0 = bridges[bA].otherH;  // h=5 (has bridge from V1)
+
+                    // Skip degenerate corners where A0 == B0 (zero-area triangle)
+                    if(A0.Equals(B0)) continue;
 
 
                     // Create flat corner triangle surface FromPlane(V1, A0-V1, B0-V1).
@@ -2373,8 +2377,214 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     hCornerSurf = surface.FindById(hCorner);
                     stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
                     hCornerSurf->trim.Add(&stb);
+                    cornerCreated = true;
                 }
             }
+
+        // CF fallback: when no valid corner was created by the bridge pairing
+        // (either no bridges exist, or all pairings were degenerate A0==B0),
+        // and cap surface is flat
+        // chamfer cap, create corner triangle to fill the topological gap.
+        // CF fallback: when bridges are degenerate (A0==B0, both bridges go P→cA),
+        // use bridge data directly to find the gap triangle in hSurf1's trim chain.
+        // The gap is at: P (bridge pFrom), cA (bridge pTo), B (next trim endpoint after cA).
+        // CF fallback: when bridges are degenerate (A0==B0, both go P→cA),
+        // shortcut BOTH hSurf1 and the chamfer cap from P→B directly,
+        // eliminating the off-plane point A from all trim chains.
+        // No corner triangle needed — just cut out the triangular pocket.
+        if(!cornerCreated && !bridges.empty()) {
+            // Find which bridge is in hSurf1's trims (it might not be bridges[0]!)
+            int surf1BridgeIdx = -1;
+            int otherBridgeIdx = -1;
+            for(int bi = 0; bi < (int)bridges.size(); bi++) {
+                SSurface *ss1chk = surface.FindById(hSurf1);
+                for(int ti = 0; ti < ss1chk->trim.n; ti++) {
+                    if(ss1chk->trim[ti].curve == bridges[bi].h) {
+                        surf1BridgeIdx = bi;
+                        break;
+                    }
+                }
+                if(surf1BridgeIdx >= 0) break;
+            }
+            // Find the other bridge (not in hSurf1)
+            for(int bi = 0; bi < (int)bridges.size(); bi++) {
+                if(bi != surf1BridgeIdx) {
+                    otherBridgeIdx = bi;
+                    break;
+                }
+            }
+            if(surf1BridgeIdx < 0) {
+                // Bridge not in hSurf1 — check hSurf2 and other surfaces
+                // Try each bridge's otherH as the "host" surface
+                for(int bi = 0; bi < (int)bridges.size(); bi++) {
+                    hSSurface hostH = bridges[bi].otherH;
+                    SSurface *hostSurf = surface.FindByIdNoOops(hostH);
+                    if(!hostSurf) continue;
+                    // Check if this bridge is in hostH's trims
+                    bool inHost = false;
+                    for(int ti = 0; ti < hostSurf->trim.n; ti++) {
+                        if(hostSurf->trim[ti].curve == bridges[bi].h) { inHost = true; break; }
+                    }
+                    if(!inHost) continue;
+                    // Find the bridge trim index in the host surface
+                    int bridgeTrimIdx = -1;
+                    for(int ti = 0; ti < hostSurf->trim.n; ti++) {
+                        if(hostSurf->trim[ti].curve == bridges[bi].h) {
+                            bridgeTrimIdx = ti;
+                            break;
+                        }
+                    }
+                    if(bridgeTrimIdx < 0) continue;
+                    // Find next trim after bridge
+                    int nextIdx = (bridgeTrimIdx + 1) % hostSurf->trim.n;
+                    hSCurve hNextCurve = hostSurf->trim[nextIdx].curve;
+                    SCurve *nextCrv = curve.FindByIdNoOops(hNextCurve);
+                    if(!nextCrv || nextCrv->pts.n < 2) continue;
+                    Vector gapP = bridges[bi].pFrom;
+                    Vector gapA = bridges[bi].pTo;
+                    Vector p0 = nextCrv->pts[0].p;
+                    Vector pN = nextCrv->pts[nextCrv->pts.n-1].p;
+                    Vector gapB = p0.Equals(gapA) ? pN : p0;
+
+                    // Find the other bridge surface (the chamfer cap)
+                    hSSurface hCapH = {};
+                    hSCurve hCapBridgeCurve = {};
+                    for(int bj = 0; bj < (int)bridges.size(); bj++) {
+                        if(bj != bi) {
+                            hCapH = bridges[bj].otherH;
+                            hCapBridgeCurve = bridges[bj].h;
+                            break;
+                        }
+                    }
+                    if(hCapH.v == 0) continue;
+
+                    // Create NC_PB (P→B): shared between hostH and hCapH
+                    hSCurve hNC_PB = AddLinearCurve(this, gapP, gapB, hostH, hCapH);
+
+                    // In hostH: replace bridge with NC_PB, remove next
+                    hostSurf = surface.FindById(hostH);
+                    for(int ti = 0; ti < hostSurf->trim.n; ti++) {
+                        if(hostSurf->trim[ti].curve == bridges[bi].h) {
+                            hostSurf->trim[ti] = STrimBy::EntireCurve(this, hNC_PB, false);
+                            break;
+                        }
+                    }
+                    hostSurf = surface.FindById(hostH);
+                    for(int ti = 0; ti < hostSurf->trim.n; ti++) {
+                        if(hostSurf->trim[ti].curve == hNextCurve) {
+                            for(int ri = ti; ri < hostSurf->trim.n - 1; ri++)
+                                hostSurf->trim[ri] = hostSurf->trim[ri + 1];
+                            hostSurf->trim.n--;
+                            break;
+                        }
+                    }
+
+                    // In hCapH: replace cap bridge with NC_PB, remove hNextCurve
+                    SSurface *capSurf = surface.FindByIdNoOops(hCapH);
+                    if(capSurf) {
+                        for(int ti = 0; ti < capSurf->trim.n; ti++) {
+                            if(capSurf->trim[ti].curve == hCapBridgeCurve) {
+                                capSurf->trim[ti] = STrimBy::EntireCurve(this, hNC_PB, false);
+                                break;
+                            }
+                        }
+                        capSurf = surface.FindByIdNoOops(hCapH);
+                        if(capSurf) {
+                            for(int ti = 0; ti < capSurf->trim.n; ti++) {
+                                if(capSurf->trim[ti].curve == hNextCurve) {
+                                    for(int ri = ti; ri < capSurf->trim.n - 1; ri++)
+                                        capSurf->trim[ri] = capSurf->trim[ri + 1];
+                                    capSurf->trim.n--;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break; // done with this bridge
+                }
+            } else {
+                // Bridge IS in hSurf1 — original code path
+                Vector gapP = bridges[surf1BridgeIdx].pFrom;
+                Vector gapA = bridges[surf1BridgeIdx].pTo;
+                hSCurve hBridgeCurve = bridges[surf1BridgeIdx].h;
+
+                SSurface *ss1 = surface.FindById(hSurf1);
+                int bridgeTrimIdx = -1;
+                for(int ti = 0; ti < ss1->trim.n; ti++) {
+                    if(ss1->trim[ti].curve == hBridgeCurve) {
+                        bridgeTrimIdx = ti;
+                        break;
+                    }
+                }
+
+                if(bridgeTrimIdx >= 0) {
+                    int nextIdx = (bridgeTrimIdx + 1) % ss1->trim.n;
+                    hSCurve hNextCurve = ss1->trim[nextIdx].curve;
+                    SCurve *nextCrv = curve.FindByIdNoOops(hNextCurve);
+                    if(nextCrv && nextCrv->pts.n >= 2) {
+                        Vector p0 = nextCrv->pts[0].p;
+                        Vector pN = nextCrv->pts[nextCrv->pts.n-1].p;
+                        Vector gapB = p0.Equals(gapA) ? pN : p0;
+
+                        // Find the other bridge surface (chamfer cap)
+                        hSSurface hOtherBridge = {};
+                        hSCurve hOtherBridgeCurve = {};
+                        if(otherBridgeIdx >= 0) {
+                            hOtherBridge = bridges[otherBridgeIdx].otherH;
+                            hOtherBridgeCurve = bridges[otherBridgeIdx].h;
+                        }
+                        if(hOtherBridge.v == 0) goto skipCfFallback;
+
+                        {
+                        // Create NC_PB (P→B): shared between hSurf1 and hOtherBridge
+                        hSCurve hNC_PB = AddLinearCurve(this, gapP, gapB, hSurf1, hOtherBridge);
+
+                        // In hSurf1: replace bridge with NC_PB(fwd → P→B), remove next
+                        ss1 = surface.FindById(hSurf1);
+                        for(int ti = 0; ti < ss1->trim.n; ti++) {
+                            if(ss1->trim[ti].curve == hBridgeCurve) {
+                                ss1->trim[ti] = STrimBy::EntireCurve(this, hNC_PB, false);
+                                break;
+                            }
+                        }
+                        ss1 = surface.FindById(hSurf1);
+                        for(int ti = 0; ti < ss1->trim.n; ti++) {
+                            if(ss1->trim[ti].curve == hNextCurve) {
+                                for(int ri = ti; ri < ss1->trim.n - 1; ri++)
+                                    ss1->trim[ri] = ss1->trim[ri + 1];
+                                ss1->trim.n--;
+                                break;
+                            }
+                        }
+
+                        // In hOtherBridge (chamfer cap): replace bridge with NC_PB, remove hNextCurve
+                        SSurface *ssOtherBr = surface.FindByIdNoOops(hOtherBridge);
+                        if(ssOtherBr) {
+                            for(int ti = 0; ti < ssOtherBr->trim.n; ti++) {
+                                if(ssOtherBr->trim[ti].curve == hOtherBridgeCurve) {
+                                    ssOtherBr->trim[ti] = STrimBy::EntireCurve(this, hNC_PB, false);
+                                    break;
+                                }
+                            }
+                            ssOtherBr = surface.FindByIdNoOops(hOtherBridge);
+                            if(ssOtherBr) {
+                                for(int ti = 0; ti < ssOtherBr->trim.n; ti++) {
+                                    if(ssOtherBr->trim[ti].curve == hNextCurve) {
+                                        for(int ri = ti; ri < ssOtherBr->trim.n - 1; ri++)
+                                            ssOtherBr->trim[ri] = ssOtherBr->trim[ri + 1];
+                                        ssOtherBr->trim.n--;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        }
+                        skipCfFallback:;
+                    }
+                }
+            }
+        }
+
         }
 
         // Safety: verify no surface trim still references hSharedSC before removing.
@@ -2478,6 +2688,23 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
         // Clear the degenerate surface's trims so it produces no mesh.
         ss.trim.Clear();
     }
+
+    // Third pass: remove phantom surfaces (trim.n == 0) entirely from the shell.
+    // After sliver collapse, the degenerate surface has 0 trims and produces no
+    // mesh, but its mere presence can confuse curve lookups and surface iteration.
+    {
+        // Collect handles to remove (can't remove during iteration)
+        std::vector<hSSurface> phantoms;
+        for(SSurface &ss : surface) {
+            if(ss.trim.n == 0) {
+                phantoms.push_back(ss.h);
+            }
+        }
+        for(hSSurface hPh : phantoms) {
+            surface.RemoveById(hPh);
+        }
+    }
+
 }
 
 } // namespace SolveSpace
