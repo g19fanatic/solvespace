@@ -250,7 +250,7 @@ MeshRenderer::Handle MeshRenderer::Add(const SMesh &m, bool dynamic) {
         vertices[i * 3 + 2].pos = Vector3f::From(t.c);
 
         if(t.an.EqualsExactly(Vector::From(0, 0, 0))) {
-            Vector3f normal = Vector3f::From(t.Normal());
+            Vector3f normal = Vector3f::From(t.EffectiveNormal());
             vertices[i * 3 + 0].nor = normal;
             vertices[i * 3 + 1].nor = normal;
             vertices[i * 3 + 2].nor = normal;

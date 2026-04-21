@@ -139,6 +139,9 @@ SSurface SSurface::FromTransformationOf(SSurface *a, Vector t, Quaternion q, dou
     ret.h = a->h;
     ret.color = a->color;
     ret.face = a->face;
+    // Option B: propagate display-flip flag onto transformed copies so that
+    // chamfered solids keep correct display-normals after copy/mirror/translate.
+    ret.flipTriangleNormals = a->flipTriangleNormals;
 
     ret.degm = a->degm;
     ret.degn = a->degn;
@@ -494,6 +497,15 @@ void SSurface::TriangulateInto(SShell *shell, SMesh *sm) {
             // Works out that my chosen contour direction is inconsistent with
             // the triangle direction, sigh.
             st->FlipNormal();
+            // Option B: If this surface was flagged by the shell builder (e.g.
+            // fillet-style chamfer corner in chamfer.cpp), tag each emitted
+            // triangle so its display-facing consumers (FindEdgeOn front/back,
+            // displayMesh shading, test anyBackFacing) negate the winding-derived
+            // normal via EffectiveNormal(). Edge-matching still uses raw winding,
+            // so closed-manifold topology is preserved.
+            if(this->flipTriangleNormals) {
+                st->flags |= STriangle::FLAG_FLIP_DISPLAY_NORMAL;
+            }
         }
     } else {
         dbp("failed to assemble polygon to trim nurbs surface in uv space");

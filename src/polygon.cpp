@@ -12,6 +12,11 @@ Vector STriangle::Normal() const {
     return ab.Cross(bc);
 }
 
+Vector STriangle::EffectiveNormal() const {
+    Vector n = Normal();
+    return (flags & FLAG_FLIP_DISPLAY_NORMAL) ? n.ScaledBy(-1) : n;
+}
+
 double STriangle::MinAltitude() const {
     double altA = a.DistanceToLine(b, c.Minus(b)),
            altB = b.DistanceToLine(c, a.Minus(c)),
@@ -104,10 +109,20 @@ bool STriangle::IsDegenerate() const {
 void STriangle::FlipNormal() {
     swap(a, b);
     swap(an, bn);
+    // Option B (iter-9 audit): `flags` is intentionally NOT touched here.
+    // FlipNormal reverses vertex winding (which reverses Normal()) AND swaps the
+    // companion per-vertex shading normals. The FLAG_FLIP_DISPLAY_NORMAL bit is a
+    // semantic "display-flip" marker layered on top of winding, so flipping winding
+    // and preserving the flag is the correct composition: callers that read
+    // EffectiveNormal() will see their intended orientation regardless of whether
+    // FlipNormal was called before or after the flag was set.
 }
 
 STriangle STriangle::Transform(Vector u, Vector v, Vector n) const {
     STriangle tr = *this;
+    // Option B (iter-9 audit): implicit memberwise copy `tr = *this` copies all
+    // POD fields including `flags`. Only the 6 Vectors are scaled below, so the
+    // display-flip bit rides along to the transformed copy as required.
     tr.a  = tr.a.ScaleOutOfCsys(u, v, n);
     tr.an = tr.an.ScaleOutOfCsys(u, v, n);
     tr.b  = tr.b.ScaleOutOfCsys(u, v, n);
@@ -119,6 +134,10 @@ STriangle STriangle::Transform(Vector u, Vector v, Vector n) const {
 
 STriangle STriangle::From(STriMeta meta, Vector a, Vector b, Vector c) {
     STriangle tr = {};
+    // Option B (iter-9 audit): aggregate zero-init `tr = {}` zero-fills all POD
+    // members; combined with the NSDMI `uint8_t flags = 0` in polygon.h this
+    // guarantees every From()-constructed triangle starts with no display-flip
+    // bit set. Callers that need the flag set it explicitly after construction.
     tr.meta = meta;
     tr.a = a;
     tr.b = b;

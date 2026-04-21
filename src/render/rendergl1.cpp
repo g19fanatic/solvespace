@@ -645,7 +645,7 @@ void OpenGl1Renderer::DrawMesh(const SMesh &m, hFill hcfFront, hFill hcfBack) {
 
         if(tr.an.EqualsExactly(Vector::From(0, 0, 0))) {
             // Compute the normal from the vertices
-            ssglNormal3v(tr.Normal());
+            ssglNormal3v(tr.EffectiveNormal());
             ssglVertex3v(tr.a);
             ssglVertex3v(tr.b);
             ssglVertex3v(tr.c);

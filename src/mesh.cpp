@@ -682,11 +682,15 @@ void SKdNode::SnapToMesh(SMesh *m) {
 void SKdNode::SplitLinesAgainstTriangle(SEdgeList *sel, STriangle *tr) const {
     SEdgeList seln = {};
 
+    // Option B: plane math uses raw winding-based Normal() (geometric plane);
+    // front-facing gate uses EffectiveNormal() (display orientation, flag-aware).
+    // See AGENT.md Iter-3 recon: mesh.cpp:685 is MIXED — split into tnGeom/tnDisp.
     Vector tn = tr->Normal().WithMagnitude(1);
+    Vector tnDisp = tr->EffectiveNormal();
     double td = tn.Dot(tr->a);
 
     // Consider front-facing triangles only.
-    if(tn.z > LENGTH_EPS) {
+    if(tnDisp.z > LENGTH_EPS) {
         // If the edge crosses our triangle's plane, then split into above
         // and below parts. Note that we must preserve auxA, which contains
         // the style associated with this line, as well as the tag, which
@@ -868,7 +872,11 @@ void SKdNode::FindEdgeOn(Vector a, Vector b, int cnt, bool coplanarIsInter,
         {
             info->count++;
             // Record whether this triangle is front- or back-facing.
-            if(tr->Normal().z > LENGTH_EPS) {
+            // Option B: use EffectiveNormal() (flag-aware) for display/front-back
+            // classification, so fillet-style corner triangles whose winding-based
+            // Normal() is inward are classified by their intended display orientation.
+            // Edge-matching above still uses raw winding (anti-parallel vertex test).
+            if(tr->EffectiveNormal().z > LENGTH_EPS) {
                 info->frontFacing = true;
             } else {
                 info->frontFacing = false;
@@ -997,7 +1005,7 @@ void SKdNode::MakeCertainEdgesInto(SEdgeList *sel, EdgeKind how, bool coplanarIs
                     break;
 
                 case EdgeKind::TURNING:
-                    if((tr->Normal().z < LENGTH_EPS) &&
+                    if((tr->EffectiveNormal().z < LENGTH_EPS) &&
                        (info.count == 1) &&
                        info.frontFacing)
                     {
@@ -1089,8 +1097,8 @@ void SKdNode::MakeOutlinesInto(SOutlineList *sol, EdgeKind edgeKind) const
                     ssassert(false, "Unexpected edge kind");
             }
 
-            Vector nl = tr->Normal().WithMagnitude(1.0);
-            Vector nr = info.tr->Normal().WithMagnitude(1.0);
+            Vector nl = tr->EffectiveNormal().WithMagnitude(1.0);
+            Vector nr = info.tr->EffectiveNormal().WithMagnitude(1.0);
 
             // We don't add edges with the same left and right
             // normals because they can't produce outlines.

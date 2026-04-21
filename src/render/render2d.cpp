@@ -346,7 +346,7 @@ void SurfaceRenderer::OutputInPaintOrder() {
 
             for(const STriangle &tr : mp.l) {
                 // Cull back-facing and invisible triangles.
-                if(tr.Normal().z < 0) continue;
+                if(tr.EffectiveNormal().z < 0) continue;
                 if(tr.meta.color.IsEmpty()) continue;
                 OutputTriangle(tr);
             }

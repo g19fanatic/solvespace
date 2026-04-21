@@ -182,6 +182,16 @@ public:
     int         tag;
     STriMeta    meta;
 
+    // Option B: flag bits decoupling triangle DISPLAY orientation from vertex winding.
+    // Winding {a,b,c} continues to govern edge-mating in mesh boolean ops (geometric).
+    // FLAG_FLIP_DISPLAY_NORMAL, when set, tells display-purpose consumers
+    // (FindEdgeOn front/back, silhouette/outline, shading normals, test harness)
+    // to treat the triangle as if its normal were negated, without altering winding.
+    // NSDMI default = 0 ensures default-initialized triangles (incl. `new STriangle[]`,
+    // `STriangle tr = {}` aggregate-init, and `STriangle::From`) start with no flag set.
+    uint8_t     flags = 0;
+    static constexpr uint8_t FLAG_FLIP_DISPLAY_NORMAL = 0x01;
+
     union {
         struct { Vector a, b, c; };
         Vector vertices[3];
@@ -194,6 +204,7 @@ public:
 
     static STriangle From(STriMeta meta, Vector a, Vector b, Vector c);
     Vector Normal() const;
+    Vector EffectiveNormal() const;
     void FlipNormal();
     double MinAltitude() const;
     bool ContainsPoint(Vector p) const;

@@ -506,7 +506,7 @@ TEST_CASE(chamfer_face_order_forward) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g1->displayMesh.l.n; ti++) {
         STriangle *tr = &g1->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
             anyBackFacing = true;
@@ -544,7 +544,7 @@ TEST_CASE(chamfer_face_order_invariant) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
         STriangle *tr = &g->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
             anyBackFacing = true;
@@ -581,7 +581,7 @@ TEST_CASE(fillet_face_order_forward) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g1->displayMesh.l.n; ti++) {
         STriangle *tr = &g1->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
             anyBackFacing = true;
@@ -620,7 +620,7 @@ TEST_CASE(fillet_face_order_invariant) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
         STriangle *tr = &g->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -LENGTH_EPS) {
             anyBackFacing = true;
@@ -1520,7 +1520,7 @@ TEST_CASE(chamfer_side_top_cap_no_backface) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
         STriangle *tr = &g->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {  // slightly relaxed threshold
             anyBackFacing = true;
@@ -1557,7 +1557,7 @@ TEST_CASE(fillet_side_top_cap_no_backface) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
         STriangle *tr = &g->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
             anyBackFacing = true;
@@ -2930,7 +2930,7 @@ TEST_CASE(chamfer_face1_face2_cap_no_backface) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
         STriangle *tr = &g->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
             anyBackFacing = true;
@@ -2988,7 +2988,7 @@ TEST_CASE(fillet_face1_face2_cap_no_backface) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g->displayMesh.l.n; ti++) {
         STriangle *tr = &g->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
             anyBackFacing = true;
@@ -3064,7 +3064,7 @@ TEST_CASE(chamfer_adjacent_cap_no_backface) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g2->displayMesh.l.n; ti++) {
         STriangle *tr = &g2->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
             anyBackFacing = true;
@@ -3144,7 +3144,7 @@ TEST_CASE(chamfer_adjacent_vertical_no_backface) {
     bool anyBackFacing = false;
     for(int ti = 0; ti < g2->displayMesh.l.n; ti++) {
         STriangle *tr = &g2->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
             anyBackFacing = true;
@@ -3159,7 +3159,7 @@ TEST_CASE(chamfer_adjacent_vertical_no_backface) {
     anyBackFacing = false;
     for(int ti = 0; ti < g1->displayMesh.l.n; ti++) {
         STriangle *tr = &g1->displayMesh.l[ti];
-        Vector normal = tr->Normal();
+        Vector normal = tr->EffectiveNormal();
         Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
         if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
             anyBackFacing = true;
@@ -3575,6 +3575,40 @@ static void RunDoubleOpTest(
     el.Clear();
     CHECK_FALSE(inters);  // No self-intersections
     CHECK_FALSE(leaks);   // No naked edges -- mesh must be watertight
+
+    // Check 5 (Option B, fix_plan item 19): no display-backfacing triangles.
+    //
+    // After Option-B (iter-24/25) sets FLAG_FLIP_DISPLAY_NORMAL on fillet-style
+    // corner surfaces, STriangle::EffectiveNormal() reports the correct outward
+    // direction for those corners. Iter-26 probe confirmed this eliminates
+    // 20 of 23 pre-existing silent-backfacing cases across the 28 doubleop tests:
+    //   CC: 7/7 clean, FC: 7/7 clean, FF: 7/7 clean, CF: 4/7 clean (3 residual).
+    //
+    // The 3 residual CF cases (op1_is_chamfer && !op2_is_chamfer) still emit
+    // exactly one display-backfacing triangle each; these are tracked by
+    // fix_plan.md contingency item C2 (doubleop CF residual backfacing).
+    // Until C2 is resolved we GUARD this check to skip the CF category.
+    // All other categories get a hard anyBackFacing gate, locking in the
+    // Option-B invariant and catching any future regression.
+    //
+    // Box is 20x20x80 (see CreateBoxExtrude), so interior center = (10,10,40).
+    // A triangle is display-backfacing iff its outward normal dotted with
+    // (centroid - boxCenter) is < -0.01 (same sign/epsilon convention as the
+    // chamfer_adjacent_cap_no_backface family of tests).
+    if(!(op1_is_chamfer && !op2_is_chamfer)) {
+        Vector boxCenter = Vector::From(10, 10, 40);
+        bool anyBackFacing = false;
+        for(int ti = 0; ti < m->l.n; ti++) {
+            STriangle *tr = &m->l[ti];
+            Vector normal = tr->EffectiveNormal();
+            Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+            if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+                anyBackFacing = true;
+                break;
+            }
+        }
+        CHECK_FALSE(anyBackFacing);
+    }
 }
 
 //=============================================================================

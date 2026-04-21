@@ -279,6 +279,10 @@ public:
 
     RgbaColor       color;
     uint32_t        face;
+    // Option B: when true, TriangulateInto tags each produced triangle with
+    // STriangle::FLAG_FLIP_DISPLAY_NORMAL so display/back-face consumers see
+    // an orientation opposite to the raw vertex winding. Default false = no-op.
+    bool            flipTriangleNormals = false;
 
     int             degm, degn;
     Vector          ctrl[4][4];

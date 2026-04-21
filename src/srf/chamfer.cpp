@@ -1080,6 +1080,17 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 if(bFromCorner || bToCorner) cornerSurf = SSurface::FromPlane(
                     cornerV1, B0.Minus(cornerV1), A0.Minus(cornerV1));
                 cornerSurf.color = surface.FindById(hChamfer)->color;
+                // Option B (item 15): for fillet-style corners (chain pattern,
+                // !bFromCorner && !bToCorner) the FromPlane winding yields an
+                // inward-facing normal at triangulation time. We keep the winding
+                // (leak-safe, edge-match-safe) but tag the surface so its emitted
+                // STriangles carry FLAG_FLIP_DISPLAY_NORMAL. EffectiveNormal()
+                // then reports the outward direction for display/front-back
+                // classification. Fork/mixed branches above already correct
+                // this geometrically via the u/v swap, so they stay flag-false.
+                if(!bFromCorner && !bToCorner) {
+                    cornerSurf.flipTriangleNormals = true;
+                }
                 hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
                 // Re-lookup after reallocation:
                 surface.FindById(hChamfer);
@@ -2306,6 +2317,19 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                             A0.Minus(cornerV1),  // u direction: V1→A0
                             B0.Minus(cornerV1)); // v direction: V1→B0
                     cornerSurf.color = surface.FindById(hFillet)->color;
+                    // Option B (iter-25 item-17): tag fillet-style fillet-corner surfaces.
+                    // Symmetric to the MakeFromChamferOf corner-tag (iter-24 item-15).
+                    // The chain-pattern branch (!forkPattern) produces a cornerSurf whose
+                    // UV parametrization emits triangles that display-backface under raw
+                    // winding.  forkPattern already swaps u/v to correct the normal
+                    // geometrically, so it must NOT be tagged.  Setting flipTriangleNormals
+                    // causes TriangulateInto (iter-14) to OR FLAG_FLIP_DISPLAY_NORMAL onto
+                    // the emitted STriangles; EffectiveNormal() then reports the flipped
+                    // normal to display/front-back classifiers without touching raw winding
+                    // (so bsp.cpp edge-match and leak invariants are preserved).
+                    if(!forkPattern) {
+                        cornerSurf.flipTriangleNormals = true;
+                    }
                     hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
                     // Re-lookup after reallocation:
                     surface.FindById(hFillet);

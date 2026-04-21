@@ -527,7 +527,7 @@ void Group::GenerateDisplayItems() {
             STriangle *t;
             for(t = runningMesh.l.First(); t; t = runningMesh.l.NextAfter(t)) {
                 STriangle trn = *t;
-                Vector n = trn.Normal();
+                Vector n = trn.EffectiveNormal();
                 trn.an = n;
                 trn.bn = n;
                 trn.cn = n;
