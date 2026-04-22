@@ -1080,6 +1080,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 if(bFromCorner || bToCorner) cornerSurf = SSurface::FromPlane(
                     cornerV1, B0.Minus(cornerV1), A0.Minus(cornerV1));
                 cornerSurf.color = surface.FindById(hChamfer)->color;
+                cornerSurf.face = faceH.v;
                 // Option B (item 15): for fillet-style corners (chain pattern,
                 // !bFromCorner && !bToCorner) the FromPlane winding yields an
                 // inward-facing normal at triangulation time. We keep the winding
@@ -2317,6 +2318,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                             A0.Minus(cornerV1),  // u direction: V1→A0
                             B0.Minus(cornerV1)); // v direction: V1→B0
                     cornerSurf.color = surface.FindById(hFillet)->color;
+                    cornerSurf.face = faceH.v;
                     // Option B (iter-25 item-17): tag fillet-style fillet-corner surfaces.
                     // Symmetric to the MakeFromChamferOf corner-tag (iter-24 item-15).
                     // The chain-pattern branch (!forkPattern) produces a cornerSurf whose

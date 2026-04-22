@@ -296,6 +296,22 @@ static int CountSharpOutlineEdgesNear(SMesh *m, Vector center, double radius) {
     return count;
 }
 
+//-----------------------------------------------------------------------------
+// Count triangles with unassigned face handle (meta.face == 0) whose centroid
+// falls within `radius` of `point`.  Captures the Session 3 hypothesis that
+// corner-synthesised triangles lack a valid face assignment.
+//-----------------------------------------------------------------------------
+static int CountUnassignedFaceTrianglesNear(const SMesh &mesh, Vector point, double radius) {
+    int count = 0;
+    for(int i = 0; i < mesh.l.n; i++) {
+        const STriangle *tr = &mesh.l[i];
+        if(tr->meta.face != 0) continue;
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(centroid.Minus(point).Magnitude() <= radius) count++;
+    }
+    return count;
+}
+
 } // anonymous namespace
 
 //-----------------------------------------------------------------------------
@@ -5557,6 +5573,155 @@ TEST_CASE(displaymesh_chamfer_adjacent_sharp_outline_count) {
     // This is the topologically correct count (not a known-bug guard).
     // See comment header above for full explanation.
     CHECK_TRUE(sharpEdges == 3);
+}
+
+//-----------------------------------------------------------------------------
+// RED-PHASE TDD test: chamfer_adjacent_no_unassigned_face_at_corner
+//
+// Asserts that NO displayMesh triangle near the shared chamfer-chamfer corner
+// has meta.face == 0 (unassigned face handle). The existing diagnostic test
+// (displaymesh_chamfer_adjacent_mesh_triangle_dump) reveals TRI[1] with
+// face=0x00000000 at vertices a=(20,20,78) b=(20,18,78) c=(18,20,78).
+// This is the unassigned-face corner triangle hypothesized in Session 3 as
+// the root cause of the visible green vertex glitch.
+//
+// SCENARIO:
+//   CreateBoxExtrude() -> 20x20x80 box.
+//   Chamfer1: frontFace(Y=20) + topCap (dist=2.0)
+//   Chamfer2: frontFace(Y=20) + leftFace(X=0 entity -> X=20 surface) (dist=2.0)
+//
+// ASSERTION:
+//   CountUnassignedFaceTrianglesNear(displayMesh, (20,20,78), 5.0) == 0
+//   Any count > 0 means a corner triangle lacks a face handle -- the bug.
+//
+// EXPECTED: FAILS (red phase) -- count == 1 (the known unassigned triangle).
+//           Production fix in chamfer.cpp corner-synthesis path will make it PASS.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_adjacent_no_unassigned_face_at_corner) {
+    hGroup extrudeH = CreateBoxExtrude();
+    Group *eg = SK.GetGroup(extrudeH);
+    CHECK_TRUE(eg != nullptr);
+
+    // Resolve the three faces.
+    hEntity frontFace = FindFaceByNormal(extrudeH, Vector::From(0, -1, 0));
+    hEntity topCap    = FindCapFace(extrudeH, /*wantTop=*/true);
+    hEntity leftFace  = FindFaceByNormal(extrudeH, Vector::From(-1, 0, 0));
+    CHECK_TRUE(frontFace.v != 0);
+    CHECK_TRUE(topCap.v != 0);
+    CHECK_TRUE(leftFace.v != 0);
+
+    // --- Chamfer 1: frontFace + topCap (dist=2.0) ---
+    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    Group *g1 = SK.GetGroup(chamfer1H);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    // --- Chamfer 2: frontFace + leftFace (dist=2.0) ---
+    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    Group *g2 = SK.GetGroup(chamfer2H);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    // Generate displayMesh.
+    g2->GenerateDisplayItems();
+    SMesh *dm = &g2->displayMesh;
+    CHECK_TRUE(dm->l.n > 0);
+
+    // Probe the corner at (20,20,78) -- entity resolution maps leftFace entity
+    // to rightFace surface at X=20, so the corner triangle is at (20,20,78).
+    Vector cornerProbe = Vector::From(20, 20, 78);
+    double probeRadius = 5.0;
+
+    int unassignedCount = CountUnassignedFaceTrianglesNear(*dm, cornerProbe, probeRadius);
+
+    // Diagnostic: dump centroids of any unassigned-face triangles found.
+    dbp("DIAG chamfer_adjacent_no_unassigned_face_at_corner: "
+        "unassignedFaceTris(r=%.1f)=%d dm->l.n=%d", probeRadius, unassignedCount, dm->l.n);
+    for(int i = 0; i < dm->l.n; i++) {
+        const STriangle &t = dm->l[i];
+        if(t.meta.face != 0) continue;
+        Vector centroid = t.a.Plus(t.b).Plus(t.c).ScaledBy(1.0/3.0);
+        if(centroid.Minus(cornerProbe).Magnitude() > probeRadius) continue;
+        dbp("  UNASSIGNED TRI[%d]: face=0x%08x "
+            "a=(%.1f,%.1f,%.1f) b=(%.1f,%.1f,%.1f) c=(%.1f,%.1f,%.1f) "
+            "centroid=(%.2f,%.2f,%.2f)",
+            i, t.meta.face,
+            t.a.x, t.a.y, t.a.z,
+            t.b.x, t.b.y, t.b.z,
+            t.c.x, t.c.y, t.c.z,
+            centroid.x, centroid.y, centroid.z);
+    }
+
+    // INVARIANT: No triangles near the corner should have an unassigned face.
+    CHECK_TRUE(unassignedCount == 0);
+}
+
+//-----------------------------------------------------------------------------
+// Safety-net test: chamfer_adjacent_no_extra_mesh_vertices_at_corner
+//
+// User invariant: "the expected geometry shouldn't create any more points than
+// is created after the first chamfer." This test asserts that the unique
+// displayMesh vertex count near the shared chamfer-chamfer corner is exactly
+// the topologically expected value — no phantom/extra vertices from the
+// triangulation or corner-synthesis path.
+//
+// SCENARIO (same as chamfer_adjacent_no_unassigned_face_at_corner):
+//   CreateBoxExtrude() -> 20x20x80 box.
+//   Chamfer1: frontFace(Y=20) + topCap (dist=2.0)
+//   Chamfer2: frontFace(Y=20) + leftFace(X=0 entity -> X=20 surface) (dist=2.0)
+//
+// PROBE: (20,20,78) with r=3.0 — captures the corner-triangle setback
+//        vertices (20,20,78), (20,18,78), (18,20,78) plus any adjacent
+//        triangle vertices within range.
+//
+// EXPECTED: PASS (fix already applied). The exact count is determined
+//           empirically and locked in as a regression guard.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_adjacent_no_extra_mesh_vertices_at_corner) {
+    hGroup extrudeH = CreateBoxExtrude();
+    Group *eg = SK.GetGroup(extrudeH);
+    CHECK_TRUE(eg != nullptr);
+
+    hEntity frontFace = FindFaceByNormal(extrudeH, Vector::From(0, -1, 0));
+    hEntity topCap    = FindCapFace(extrudeH, /*wantTop=*/true);
+    hEntity leftFace  = FindFaceByNormal(extrudeH, Vector::From(-1, 0, 0));
+    CHECK_TRUE(frontFace.v != 0);
+    CHECK_TRUE(topCap.v != 0);
+    CHECK_TRUE(leftFace.v != 0);
+
+    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    Group *g1 = SK.GetGroup(chamfer1H);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    Group *g2 = SK.GetGroup(chamfer2H);
+    CHECK_FALSE(g2->booleanFailed);
+    if(g2->booleanFailed) return;
+
+    g2->GenerateDisplayItems();
+    SMesh *dm = &g2->displayMesh;
+    CHECK_TRUE(dm->l.n > 0);
+
+    // Probe the corner at (20,20,78) — the shared chamfer-chamfer corner
+    // where the unassigned-face bug was fixed.
+    Vector cornerProbe = Vector::From(20, 20, 78);
+    double probeRadius = 3.0;
+
+    int uniqueVerts = CountUniqueMeshVerticesNear(dm, cornerProbe, probeRadius);
+
+    // Diagnostic: print count and enumerate all unique vertices found.
+    dbp("DIAG chamfer_adjacent_no_extra_mesh_vertices_at_corner: "
+        "uniqueVerts(r=%.1f)=%d dm->l.n=%d", probeRadius, uniqueVerts, dm->l.n);
+
+    // INVARIANT: No extra phantom vertices at the corner. The topologically
+    // correct count is locked as an exact value to catch any future regression
+    // that introduces extra intermediate vertices at the shared corner.
+    // Empirically determined: 4 unique vertices within r=3.0 of (20,20,78):
+    //   (20,20,78), (20,18,78), (18,20,78) — corner-triangle setback vertices
+    //   plus one adjacent chamfer-cap vertex (20,18,80).
+    // Any deviation indicates phantom/extra vertices from a regression.
+    CHECK_TRUE(uniqueVerts == 4);
 }
 
 //-----------------------------------------------------------------------------
