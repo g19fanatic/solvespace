@@ -66,7 +66,17 @@ set(testsuite_SOURCES
     group/link/test.cpp
     group/translate_asy/test.cpp
     group/translate_nd/test.cpp
-    group/chamfer/test.cpp
+    group/chamfer/test_basic.cpp
+    group/chamfer/test_geometry.cpp
+    group/chamfer/test_entity.cpp
+    group/chamfer/test_cap.cpp
+    group/chamfer/test_diff.cpp
+    group/chamfer/test_chained.cpp
+    group/chamfer/test_doubleop.cpp
+    group/chamfer/test_adjacent.cpp
+    group/chamfer/test_surface.cpp
+    group/chamfer/test_displaymesh.cpp
+    group/chamfer/test_geom_verify.cpp
 )
 
 add_executable(solvespace-testsuite
