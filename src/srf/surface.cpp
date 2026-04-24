@@ -142,6 +142,7 @@ SSurface SSurface::FromTransformationOf(SSurface *a, Vector t, Quaternion q, dou
     // Option B: propagate display-flip flag onto transformed copies so that
     // chamfered solids keep correct display-normals after copy/mirror/translate.
     ret.flipTriangleNormals = a->flipTriangleNormals;
+    ret.excludeFromDisplay = a->excludeFromDisplay;
 
     ret.degm = a->degm;
     ret.degn = a->degn;
@@ -505,6 +506,9 @@ void SSurface::TriangulateInto(SShell *shell, SMesh *sm) {
             // so closed-manifold topology is preserved.
             if(this->flipTriangleNormals) {
                 st->flags |= STriangle::FLAG_FLIP_DISPLAY_NORMAL;
+            }
+            if(this->excludeFromDisplay) {
+                st->flags |= STriangle::FLAG_DISPLAY_HIDDEN;
             }
         }
     } else {

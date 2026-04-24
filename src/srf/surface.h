@@ -283,6 +283,7 @@ public:
     // STriangle::FLAG_FLIP_DISPLAY_NORMAL so display/back-face consumers see
     // an orientation opposite to the raw vertex winding. Default false = no-op.
     bool            flipTriangleNormals = false;
+    bool            excludeFromDisplay = false;
 
     int             degm, degn;
     Vector          ctrl[4][4];

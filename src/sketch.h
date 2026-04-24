@@ -267,6 +267,7 @@ public:
 
     bool            displayDirty;
     SMesh           displayMesh;
+    SMesh           displayRenderMesh;
     SOutlineList    displayOutlines;
 
     enum class CombineAs : uint32_t {

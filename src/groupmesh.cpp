@@ -514,6 +514,8 @@ void Group::GenerateDisplayItems() {
 
             displayMesh.Clear();
             displayMesh.MakeFromCopyOf(&(pg->displayMesh));
+            displayRenderMesh.Clear();
+            displayRenderMesh.MakeFromCopyOf(&(pg->displayRenderMesh));
 
             displayOutlines.Clear();
             if(SS.GW.showEdges || SS.GW.showOutlines) {
@@ -534,6 +536,16 @@ void Group::GenerateDisplayItems() {
                 displayMesh.AddTriangle(&trn);
             }
 
+            // Build displayRenderMesh excluding FLAG_DISPLAY_HIDDEN triangles.
+            // displayMesh is preserved intact for watertightness/volume/export.
+            displayRenderMesh.Clear();
+            for(int i = 0; i < displayMesh.l.n; i++) {
+                STriangle *tri = &displayMesh.l[i];
+                if(!(tri->flags & STriangle::FLAG_DISPLAY_HIDDEN)) {
+                    displayRenderMesh.AddTriangle(tri);
+                }
+            }
+
             displayOutlines.Clear();
 
             if(SS.GW.showEdges || SS.GW.showOutlines) {
@@ -542,7 +554,7 @@ void Group::GenerateDisplayItems() {
                     // Triangle mesh only; no shell or emphasized edges.
                     runningMesh.MakeOutlinesInto(&rawOutlines, EdgeKind::EMPHASIZED);
                 } else {
-                    displayMesh.MakeOutlinesInto(&rawOutlines, EdgeKind::SHARP);
+                    displayRenderMesh.MakeOutlinesInto(&rawOutlines, EdgeKind::SHARP);
                 }
 
                 PolylineBuilder builder;
@@ -555,7 +567,7 @@ void Group::GenerateDisplayItems() {
         // If we render this mesh, we need to know whether it's transparent,
         // and we'll want all transparent triangles last, to make the depth test
         // work correctly.
-        displayMesh.PrecomputeTransparency();
+        displayRenderMesh.PrecomputeTransparency();
 
         // Recalculate mass center if needed
         if(SS.centerOfMass.draw && SS.centerOfMass.dirty && h == SS.GW.activeGroup) {
@@ -625,7 +637,7 @@ void Group::DrawMesh(DrawMeshAs how, Canvas *canvas) {
             // The back faces are drawn in red; should never seem them, since we
             // draw closed shells, so that's a debugging aid.
             Canvas::hFill hcfBack = {};
-            if(SS.drawBackFaces && !displayMesh.isTransparent) {
+            if(SS.drawBackFaces && !displayRenderMesh.isTransparent) {
                 Canvas::Fill fillBack = {};
                 fillBack.layer = fillFront.layer;
                 fillBack.color = RgbaColor::FromFloat(1.0f, 0.1f, 0.1f);
@@ -636,7 +648,7 @@ void Group::DrawMesh(DrawMeshAs how, Canvas *canvas) {
 
             // Draw the shaded solid into the depth buffer for hidden line removal,
             // and if we're actually going to display it, to the color buffer too.
-            canvas->DrawMesh(displayMesh, hcfFront, hcfBack);
+            canvas->DrawMesh(displayRenderMesh, hcfFront, hcfBack);
 
             // Draw mesh edges, for debugging.
             if(SS.GW.showMesh) {
@@ -647,7 +659,7 @@ void Group::DrawMesh(DrawMeshAs how, Canvas *canvas) {
                 strokeTriangle.unit   = Canvas::Unit::PX;
                 Canvas::hStroke hcsTriangle = canvas->GetStroke(strokeTriangle);
                 SEdgeList edges = {};
-                for(const STriangle &t : displayMesh.l) {
+                for(const STriangle &t : displayRenderMesh.l) {
                     edges.AddEdge(t.a, t.b);
                     edges.AddEdge(t.b, t.c);
                     edges.AddEdge(t.c, t.a);
@@ -670,7 +682,7 @@ void Group::DrawMesh(DrawMeshAs how, Canvas *canvas) {
             if(he.v != 0 && SK.GetEntity(he)->IsFace()) {
                 faces.push_back(he.v);
             }
-            canvas->DrawFaces(displayMesh, faces, hcf);
+            canvas->DrawFaces(displayRenderMesh, faces, hcf);
             break;
         }
 
@@ -689,7 +701,7 @@ void Group::DrawMesh(DrawMeshAs how, Canvas *canvas) {
             for(auto &fc : gs.face) {
                 faces.push_back(fc.v);
             }
-            canvas->DrawFaces(displayMesh, faces, hcf);
+            canvas->DrawFaces(displayRenderMesh, faces, hcf);
             break;
         }
     }

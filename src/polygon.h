@@ -192,6 +192,10 @@ public:
     uint8_t     flags = 0;
     static constexpr uint8_t FLAG_FLIP_DISPLAY_NORMAL = 0x01;
 
+    // FLAG_DISPLAY_HIDDEN marks triangles that should not be rendered visually
+    // but must remain in the mesh for watertightness / naked-edge checks.
+    static constexpr uint8_t FLAG_DISPLAY_HIDDEN = 0x02;
+
     union {
         struct { Vector a, b, c; };
         Vector vertices[3];

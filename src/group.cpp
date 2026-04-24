@@ -28,6 +28,7 @@ void Group::Clear() {
     thisShell.Clear();
     runningShell.Clear();
     displayMesh.Clear();
+    displayRenderMesh.Clear();
     displayOutlines.Clear();
     impMesh.Clear();
     impShell.Clear();
@@ -903,6 +904,64 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                    dist <= edgeLen / 2.0) {
                                     Vector t = edgeVec.WithMagnitude(1);
 
+                                    // Step 5.5: V extension for adjacent chamfers.
+                                    // If V1 or V2 was truncated by a prior chamfer,
+                                    // extend back to the original corner position.
+                                    Vector V1_orig = V1;
+                                    Vector V2_orig = V2;
+                                    hSSurface hAdjCapAtV1 = {};
+                                    hSSurface hAdjCapAtV2 = {};
+                                    for(SCurve &sc_pre : srcShell->curve) {
+                                        if(sc_pre.h == hSharedSC) continue;
+                                        if(sc_pre.pts.n < 2) continue;
+                                        Vector first_pre = sc_pre.pts[0].p;
+                                        Vector last_pre  = sc_pre.pts[sc_pre.pts.n - 1].p;
+                                        bool touchesV1_pre = first_pre.Equals(V1) || last_pre.Equals(V1);
+                                        bool touchesV2_pre = first_pre.Equals(V2) || last_pre.Equals(V2);
+                                        if(!touchesV1_pre && !touchesV2_pre) continue;
+                                        for(int side_pre = 0; side_pre < 2; side_pre++) {
+                                            hSSurface hCand_pre = (side_pre == 0)
+                                                                      ? sc_pre.surfA
+                                                                      : sc_pre.surfB;
+                                            if(hCand_pre.v == 0) continue;
+                                            if(hCand_pre == hSurf1 || hCand_pre == hSurf2) continue;
+                                            SSurface *sCand_pre =
+                                                srcShell->surface.FindById(hCand_pre);
+                                            if(sCand_pre->degm != 1 || sCand_pre->degn != 1)
+                                                continue;
+                                            double projMax = -1e20, projMin = 1e20;
+                                            for(int ci = 0; ci < 2; ci++) {
+                                                for(int cj = 0; cj < 2; cj++) {
+                                                    double p =
+                                                        sCand_pre->ctrl[ci][cj].Dot(t);
+                                                    if(p > projMax) projMax = p;
+                                                    if(p < projMin) projMin = p;
+                                                }
+                                            }
+                                            if(touchesV2_pre) {
+                                                double v2proj = V2.Dot(t);
+                                                if(projMax > v2proj + LENGTH_EPS) {
+                                                    V2 = V2.Plus(
+                                                        t.ScaledBy(projMax - v2proj));
+                                                    hAdjCapAtV2 = hCand_pre;
+                                                }
+                                            }
+                                            if(touchesV1_pre) {
+                                                double v1proj = V1.Dot(t);
+                                                if(projMin < v1proj - LENGTH_EPS) {
+                                                    V1 = V1.Plus(
+                                                        t.ScaledBy(projMin - v1proj));
+                                                    hAdjCapAtV1 = hCand_pre;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if(!V1.Equals(V1_orig) || !V2.Equals(V2_orig)) {
+                                        edgeVec = V2.Minus(V1);
+                                        edgeLen = edgeVec.Magnitude();
+                                        t = edgeVec.WithMagnitude(1);
+                                    }
+
                                     SSurface *surf1 = srcShell->surface.FindById(hSurf1);
                                     SSurface *surf2 = srcShell->surface.FindById(hSurf2);
 
@@ -938,6 +997,90 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                     Vector D = V1.Plus(d2.ScaledBy(dist));
                                     Vector C = V2.Plus(d2.ScaledBy(dist));
 
+                                    // Step 8.5: diagonal trim for adjacent chamfers.
+                                    if(hAdjCapAtV2.v != 0) {
+                                        SSurface *adjCapV2 =
+                                            srcShell->surface.FindById(hAdjCapAtV2);
+                                        Point2d uvMidAdj2;
+                                        uvMidAdj2.x = 0.5;
+                                        uvMidAdj2.y = 0.5;
+                                        Vector nAdj2 =
+                                            adjCapV2->NormalAt(uvMidAdj2).WithMagnitude(1.0);
+                                        Vector ptAdj2 = adjCapV2->ctrl[0][0];
+                                        Vector DC = C.Minus(D);
+                                        double denom2 = nAdj2.Dot(DC);
+                                        double lambda2 =
+                                            (fabs(denom2) > LENGTH_EPS)
+                                                ? nAdj2.Dot(ptAdj2.Minus(D)) / denom2
+                                                : 0.0;
+                                        Vector AB = B.Minus(A);
+                                        double denomB = nAdj2.Dot(AB);
+                                        double lambdaB =
+                                            (fabs(denomB) > LENGTH_EPS)
+                                                ? nAdj2.Dot(ptAdj2.Minus(A)) / denomB
+                                                : 0.0;
+                                        if(lambda2 > 1.0 + 1e-3 ||
+                                           lambdaB > 1.0 + 1e-3) {
+                                            V2 = V2_orig;
+                                            B = V2.Plus(d1.ScaledBy(dist));
+                                            C = V2.Plus(d2.ScaledBy(dist));
+                                            hAdjCapAtV2 = {};
+                                            edgeVec = V2.Minus(V1);
+                                            edgeLen = edgeVec.Magnitude();
+                                            t = edgeVec.WithMagnitude(1);
+                                        } else {
+                                            if(lambda2 > LENGTH_EPS &&
+                                               lambda2 < 1.0 - LENGTH_EPS) {
+                                                C = D.Plus(DC.ScaledBy(lambda2));
+                                            }
+                                            if(lambdaB > LENGTH_EPS &&
+                                               lambdaB < 1.0 - LENGTH_EPS) {
+                                                B = A.Plus(AB.ScaledBy(lambdaB));
+                                            }
+                                        }
+                                    }
+                                    if(hAdjCapAtV1.v != 0) {
+                                        SSurface *adjCapV1 =
+                                            srcShell->surface.FindById(hAdjCapAtV1);
+                                        Point2d uvMidAdj1;
+                                        uvMidAdj1.x = 0.5;
+                                        uvMidAdj1.y = 0.5;
+                                        Vector nAdj1 =
+                                            adjCapV1->NormalAt(uvMidAdj1).WithMagnitude(1.0);
+                                        Vector ptAdj1 = adjCapV1->ctrl[0][0];
+                                        Vector CD = D.Minus(C);
+                                        double denom1 = nAdj1.Dot(CD);
+                                        double lambda1 =
+                                            (fabs(denom1) > LENGTH_EPS)
+                                                ? nAdj1.Dot(ptAdj1.Minus(C)) / denom1
+                                                : 0.0;
+                                        Vector BA = A.Minus(B);
+                                        double denomA = nAdj1.Dot(BA);
+                                        double lambdaA =
+                                            (fabs(denomA) > LENGTH_EPS)
+                                                ? nAdj1.Dot(ptAdj1.Minus(B)) / denomA
+                                                : 0.0;
+                                        if(lambda1 > 1.0 + 1e-3 ||
+                                           lambdaA > 1.0 + 1e-3) {
+                                            V1 = V1_orig;
+                                            A = V1.Plus(d1.ScaledBy(dist));
+                                            D = V1.Plus(d2.ScaledBy(dist));
+                                            hAdjCapAtV1 = {};
+                                            edgeVec = V2.Minus(V1);
+                                            edgeLen = edgeVec.Magnitude();
+                                            t = edgeVec.WithMagnitude(1);
+                                        } else {
+                                            if(lambda1 > LENGTH_EPS &&
+                                               lambda1 < 1.0 - LENGTH_EPS) {
+                                                D = C.Plus(CD.ScaledBy(lambda1));
+                                            }
+                                            if(lambdaA > LENGTH_EPS &&
+                                               lambdaA < 1.0 - LENGTH_EPS) {
+                                                A = B.Plus(BA.ScaledBy(lambdaA));
+                                            }
+                                        }
+                                    }
+
                                     // Generate POINT_N_COPY entities (no params needed;
                                     // POINT_N_COPY::PointGetNum() returns numPoint directly).
                                     // Hide the original extrude group's point entities at V1 and V2,
@@ -946,7 +1089,8 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                         Entity &existEnt = entity->Get(ei);
                                         if(existEnt.IsPoint()) {
                                             Vector ep_ch = existEnt.PointGetNum();
-                                            if(ep_ch.Equals(V1) || ep_ch.Equals(V2)) {
+                                            if(ep_ch.Equals(V1_orig) ||
+                                               ep_ch.Equals(V2_orig)) {
                                                 existEnt.forceHidden = true;
                                             }
                                         }
@@ -960,7 +1104,9 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                         if(ep0 && ep1) {
                                             Vector p0 = ep0->PointGetNum();
                                             Vector p1 = ep1->PointGetNum();
-                                            if(p0.Equals(V1) || p0.Equals(V2) || p1.Equals(V1) || p1.Equals(V2)) {
+                                            if(p0.Equals(V1_orig) || p0.Equals(V2_orig) ||
+                                               p1.Equals(V1_orig) ||
+                                               p1.Equals(V2_orig)) {
                                                 existEnt.forceHidden = true;
                                             }
                                         }

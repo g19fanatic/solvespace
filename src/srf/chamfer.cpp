@@ -437,6 +437,61 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
 
     Vector t = edgeVec.WithMagnitude(1);  // unit tangent along edge
 
+    // Step 5.5: Early adjacency pre-scan — detect if V1 or V2 was truncated
+    // by a prior chamfer, and extend back to the original corner position.
+    // V1_orig/V2_orig preserve the topology-matching values for downstream lookups.
+    Vector V1_orig = V1;
+    Vector V2_orig = V2;
+    hSSurface hAdjCapAtV1 = {};
+    hSSurface hAdjCapAtV2 = {};
+    for(SCurve &sc_pre : curve) {
+        if(sc_pre.h == hSharedSC) continue;
+        if(sc_pre.pts.n < 2) continue;
+        Vector first_pre = sc_pre.pts[0].p;
+        Vector last_pre = sc_pre.pts[sc_pre.pts.n - 1].p;
+        bool touchesV1_pre = first_pre.Equals(V1) || last_pre.Equals(V1);
+        bool touchesV2_pre = first_pre.Equals(V2) || last_pre.Equals(V2);
+        if(!touchesV1_pre && !touchesV2_pre) continue;
+        for(int side_pre = 0; side_pre < 2; side_pre++) {
+            hSSurface hCand_pre = (side_pre == 0) ? sc_pre.surfA : sc_pre.surfB;
+            if(hCand_pre.v == 0) continue;
+            if(hCand_pre == hSurf1 || hCand_pre == hSurf2) continue;
+            SSurface *sCand_pre = surface.FindById(hCand_pre);
+            if(sCand_pre->degm != 1 || sCand_pre->degn != 1) continue; // only flat caps
+            // Project candidate cap's ctrl points onto edge tangent
+            double projMax = -1e20, projMin = 1e20;
+            for(int ci = 0; ci < 2; ci++) {
+                for(int cj = 0; cj < 2; cj++) {
+                    double p = sCand_pre->ctrl[ci][cj].Dot(t);
+                    if(p > projMax) projMax = p;
+                    if(p < projMin) projMin = p;
+                }
+            }
+            if(touchesV2_pre) {
+                double v2proj = V2.Dot(t);
+                if(projMax > v2proj + LENGTH_EPS) {
+                    V2 = V2.Plus(t.ScaledBy(projMax - v2proj));
+                    hAdjCapAtV2 = hCand_pre;
+                }
+            }
+            if(touchesV1_pre) {
+                double v1proj = V1.Dot(t);
+                if(projMin < v1proj - LENGTH_EPS) {
+                    V1 = V1.Plus(t.ScaledBy(projMin - v1proj));
+                    hAdjCapAtV1 = hCand_pre;
+                }
+            }
+        }
+    }
+    // If V1 or V2 was extended, recompute edge geometry
+    if(!V1.Equals(V1_orig) || !V2.Equals(V2_orig)) {
+        edgeVec = V2.Minus(V1);
+        edgeLen = edgeVec.Magnitude();
+        if(edgeLen < LENGTH_EPS) { booleanFailed = true; return; }
+        if(dist < LENGTH_EPS || dist > edgeLen / 2.0) { booleanFailed = true; return; }
+        t = edgeVec.WithMagnitude(1);
+    }
+
     // Step 6: compute face normals at edge midpoint
     Vector edgeMid = V1.Plus(V2).ScaledBy(0.5);
     SSurface *surf1 = surface.FindById(hSurf1);
@@ -498,6 +553,104 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     Vector D = V1.Plus(d2.ScaledBy(dist));
     Vector C = V2.Plus(d2.ScaledBy(dist));
 
+    // Step 8.5: Trim oversized cap at adjacent chamfer plane intersection.
+    // When V was extended by Step 5.5, C (or D) overshoots beyond the adjacent
+    // chamfer's cap plane. Intersect the D→C (or A→D) line with the adjacent
+    // cap's plane to find the correct diagonal trim point.
+    // ALSO trim B (surf1 at V2) and A (surf1 at V1) because orientation
+    // normalization may swap which side (d1/d2) overshoots. The lambda ∈ (0,1)
+    // guard ensures trimming only happens when the point actually overshoots.
+    // For the V2 end: intersect A→B with adjCap plane → trim B
+    //                 intersect D→C with adjCap plane → trim C
+    // For the V1 end: intersect B→A with adjCap plane → trim A
+    //                 intersect C→D with adjCap plane → trim D
+    if(hAdjCapAtV2.v != 0) {
+        SSurface *adjCapV2 = surface.FindById(hAdjCapAtV2);
+        Point2d uvMidAdj2;
+        uvMidAdj2.x = 0.5;
+        uvMidAdj2.y = 0.5;
+        Vector nAdj2 = adjCapV2->NormalAt(uvMidAdj2).WithMagnitude(1.0);
+        Vector ptAdj2 = adjCapV2->ctrl[0][0];
+        // Compute BOTH lambdas first to check for revert condition.
+        // If either lambda > 1 (trim point beyond edge), the extension created
+        // an oversized cap that physically overlaps the adjacent cap's surface.
+        // This happens when dist2 > dist1 (current chamfer is LARGER than adjacent).
+        // In that case, revert V2 to V2_orig and recompute B, C without extension.
+        Vector DC = C.Minus(D);
+        double denom2 = nAdj2.Dot(DC);
+        double lambda2 = (fabs(denom2) > LENGTH_EPS)
+                              ? nAdj2.Dot(ptAdj2.Minus(D)) / denom2
+                              : 0.0;
+        Vector AB = B.Minus(A);
+        double denomB = nAdj2.Dot(AB);
+        double lambdaB = (fabs(denomB) > LENGTH_EPS)
+                              ? nAdj2.Dot(ptAdj2.Minus(A)) / denomB
+                              : 0.0;
+        // If either lambda exceeds 1, the V extension causes surface overlap.
+        // Revert V2 to V2_orig and skip diagonal trim for this endpoint.
+        if(lambda2 > 1.0 + 1e-3 || lambdaB > 1.0 + 1e-3) {
+            V2 = V2_orig;
+            B = V2.Plus(d1.ScaledBy(dist));
+            C = V2.Plus(d2.ScaledBy(dist));
+            hAdjCapAtV2 = {};
+            // Recompute edge geometry with reverted V2
+            edgeVec = V2.Minus(V1);
+            edgeLen = edgeVec.Magnitude();
+            if(edgeLen < LENGTH_EPS) { booleanFailed = true; return; }
+            if(dist < LENGTH_EPS || dist > edgeLen / 2.0) { booleanFailed = true; return; }
+            t = edgeVec.WithMagnitude(1);
+        } else {
+            // Normal case: apply diagonal trims where lambda ∈ (0,1)
+            if(lambda2 > LENGTH_EPS && lambda2 < 1.0 - LENGTH_EPS) {
+                C = D.Plus(DC.ScaledBy(lambda2));
+            }
+            if(lambdaB > LENGTH_EPS && lambdaB < 1.0 - LENGTH_EPS) {
+                B = A.Plus(AB.ScaledBy(lambdaB));
+            }
+        }
+    }
+    if(hAdjCapAtV1.v != 0) {
+        SSurface *adjCapV1 = surface.FindById(hAdjCapAtV1);
+        Point2d uvMidAdj1;
+        uvMidAdj1.x = 0.5;
+        uvMidAdj1.y = 0.5;
+        Vector nAdj1 = adjCapV1->NormalAt(uvMidAdj1).WithMagnitude(1.0);
+        Vector ptAdj1 = adjCapV1->ctrl[0][0];
+        // Compute BOTH lambdas first to check for revert condition.
+        // If either lambda > 1, the extension causes surface overlap → revert V1.
+        Vector CD = D.Minus(C);
+        double denom1 = nAdj1.Dot(CD);
+        double lambda1 = (fabs(denom1) > LENGTH_EPS)
+                              ? nAdj1.Dot(ptAdj1.Minus(C)) / denom1
+                              : 0.0;
+        Vector BA = A.Minus(B);
+        double denomA = nAdj1.Dot(BA);
+        double lambdaA = (fabs(denomA) > LENGTH_EPS)
+                              ? nAdj1.Dot(ptAdj1.Minus(B)) / denomA
+                              : 0.0;
+        // If either lambda exceeds 1, revert V1 to V1_orig.
+        if(lambda1 > 1.0 + 1e-3 || lambdaA > 1.0 + 1e-3) {
+            V1 = V1_orig;
+            A = V1.Plus(d1.ScaledBy(dist));
+            D = V1.Plus(d2.ScaledBy(dist));
+            hAdjCapAtV1 = {};
+            // Recompute edge geometry with reverted V1
+            edgeVec = V2.Minus(V1);
+            edgeLen = edgeVec.Magnitude();
+            if(edgeLen < LENGTH_EPS) { booleanFailed = true; return; }
+            if(dist < LENGTH_EPS || dist > edgeLen / 2.0) { booleanFailed = true; return; }
+            t = edgeVec.WithMagnitude(1);
+        } else {
+            // Normal case: apply diagonal trims where lambda ∈ (0,1)
+            if(lambda1 > LENGTH_EPS && lambda1 < 1.0 - LENGTH_EPS) {
+                D = C.Plus(CD.ScaledBy(lambda1));
+            }
+            if(lambdaA > LENGTH_EPS && lambdaA < 1.0 - LENGTH_EPS) {
+                A = B.Plus(BA.ScaledBy(lambdaA));
+            }
+        }
+    }
+
     // Step 9: create chamfer surface
     // FromPlane(origin, u, v):
     //   ctrl[0][0] = origin     = A  (u=0,v=0)
@@ -505,6 +658,10 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     //   ctrl[1][0] = origin+v   = D  (u=0,v=1)
     //   ctrl[1][1] = origin+u+v = C  (u=1,v=1)
     SSurface chamferSurf = SSurface::FromPlane(A, B.Minus(A), D.Minus(A));
+    // After diagonal trim (Step 8.5), A/B/C/D may form a non-parallelogram
+    // (trapezoid). FromPlane computes ctrl[1][1] = A+(B-A)+(D-A) = B+D-A,
+    // which differs from C when the quad is a trapezoid. Fix ctrl[1][1].
+    chamferSurf.ctrl[1][1] = C;
     chamferSurf.color = surf1->color;
     hEntity faceH = g->Remap(g->predef.entityB, Group::REMAP_CHAMFER_FACE);
     chamferSurf.face = faceH.v;
@@ -538,8 +695,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         if(sc_scan.pts.n < 2) continue;
         Vector first = sc_scan.pts[0].p;
         Vector last = sc_scan.pts[sc_scan.pts.n - 1].p;
-        bool touchesV1 = first.Equals(V1) || last.Equals(V1);
-        bool touchesV2 = first.Equals(V2) || last.Equals(V2);
+        bool touchesV1 = first.Equals(V1_orig) || last.Equals(V1_orig);
+        bool touchesV2 = first.Equals(V2_orig) || last.Equals(V2_orig);
         if(!touchesV1 && !touchesV2) continue;
         for(int side = 0; side < 2; side++) {
             hSSurface hCand = (side == 0) ? sc_scan.surfA : sc_scan.surfB;
@@ -634,17 +791,17 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 bool bS1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
                 bool bS2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
                 if(!bS1 && !bS2) continue;
-                if(stb_s.start.Equals(V1) || stb_s.finish.Equals(V1)) {
+                if(stb_s.start.Equals(V1_orig) || stb_s.finish.Equals(V1_orig)) {
                     Vector pt = bS1 ? A : D;
                     if(!CanInsertPointIntoCurvePts(nc, pt)) {
                         // Directional discriminator: the failing curve's direction
                         // from V1 determines whether this is a doubleop diagonal
                         // (direction aligns with pt) or an adjacent-chamfer diagonal
                         // (direction aligns with the opposite setback).
-                        Vector pOther = stb_s.start.Equals(V1) ? stb_s.finish : stb_s.start;
-                        Vector curveDir = pOther.Minus(V1);
-                        Vector dirPt  = pt.Minus(V1);
-                        Vector dirOpp = (bS1 ? D : A).Minus(V1);
+                        Vector pOther = stb_s.start.Equals(V1_orig) ? stb_s.finish : stb_s.start;
+                        Vector curveDir = pOther.Minus(V1_orig);
+                        Vector dirPt  = pt.Minus(V1_orig);
+                        Vector dirOpp = (bS1 ? D : A).Minus(V1_orig);
                         double magPt  = dirPt.Magnitude();
                         double magOpp = dirOpp.Magnitude();
                         double dotPt  = (magPt  > LENGTH_EPS) ? fabs(curveDir.Dot(dirPt.WithMagnitude(1.0)))  : 0;
@@ -667,16 +824,16 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 bool bS1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
                 bool bS2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
                 if(!bS1 && !bS2) continue;
-                if(stb_s.start.Equals(V2) || stb_s.finish.Equals(V2)) {
+                if(stb_s.start.Equals(V2_orig) || stb_s.finish.Equals(V2_orig)) {
                     Vector pt = bS1 ? B : C;
                     if(!CanInsertPointIntoCurvePts(nc, pt)) {
                         // Directional discriminator (V2 variant): same logic as V1.
                         // For V2, the setback points are B (bS1) or C (bS2),
                         // and the opposite setbacks are C (bS1) or B (bS2).
-                        Vector pOther = stb_s.start.Equals(V2) ? stb_s.finish : stb_s.start;
-                        Vector curveDir = pOther.Minus(V2);
-                        Vector dirPt  = pt.Minus(V2);
-                        Vector dirOpp = (bS1 ? C : B).Minus(V2);
+                        Vector pOther = stb_s.start.Equals(V2_orig) ? stb_s.finish : stb_s.start;
+                        Vector curveDir = pOther.Minus(V2_orig);
+                        Vector dirPt  = pt.Minus(V2_orig);
+                        Vector dirOpp = (bS1 ? C : B).Minus(V2_orig);
                         double magPt  = dirPt.Magnitude();
                         double magOpp = dirOpp.Magnitude();
                         double dotPt  = (magPt  > LENGTH_EPS) ? fabs(curveDir.Dot(dirPt.WithMagnitude(1.0)))  : 0;
@@ -702,7 +859,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         bool foundShared = false;
         for(STrimBy &stb : surf1->trim) {
             if(stb.curve == hSharedSC) {
-                v1AtStart = stb.start.Equals(V1);
+                v1AtStart = stb.start.Equals(V1_orig);
                 foundShared = true;
 
                 // Replace with hCurve1 (A->B forward, D is V1 side, B is V2 side)
@@ -753,16 +910,16 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(nc && skipCapV1Curves && (nc->surfA == hCapSurfV1 || nc->surfB == hCapSurfV1)) continue;
             if(nc && skipCapV2Curves && (nc->surfA == hCapSurfV2 || nc->surfB == hCapSurfV2)) continue;
 
-            if(stb_n.start.Equals(V1)) {
-                if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_n.start = A; }
-            } else if(stb_n.start.Equals(V2)) {
-                if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_n.start = B; }
+            if(stb_n.start.Equals(V1_orig)) {
+                if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1_orig, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, A); stb_n.start = A; }
+            } else if(stb_n.start.Equals(V2_orig)) {
+                if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2_orig, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, B); stb_n.start = B; }
             }
 
-            if(stb_n.finish.Equals(V1)) {
-                if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_n.finish = A; }
-            } else if(stb_n.finish.Equals(V2)) {
-                if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_n.finish = B; }
+            if(stb_n.finish.Equals(V1_orig)) {
+                if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1_orig, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, A); stb_n.finish = A; }
+            } else if(stb_n.finish.Equals(V2_orig)) {
+                if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2_orig, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, B); stb_n.finish = B; }
             }
         }
     }
@@ -778,7 +935,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         bool foundShared2 = false;
         for(STrimBy &stb : surf2->trim) {
             if(stb.curve == hSharedSC) {
-                v1AtStart2 = stb.start.Equals(V1);
+                v1AtStart2 = stb.start.Equals(V1_orig);
                 foundShared2 = true;
 
                 // hCurve2: surfA=hChamfer, surfB=hSurf2
@@ -810,16 +967,16 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(nc && skipCapV1Curves && (nc->surfA == hCapSurfV1 || nc->surfB == hCapSurfV1)) continue;
             if(nc && skipCapV2Curves && (nc->surfA == hCapSurfV2 || nc->surfB == hCapSurfV2)) continue;
 
-            if(stb_n.start.Equals(V1)) {
-                if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_n.start = D; }
-            } else if(stb_n.start.Equals(V2)) {
-                if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_n.start = C; }
+            if(stb_n.start.Equals(V1_orig)) {
+                if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1_orig, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, D); stb_n.start = D; }
+            } else if(stb_n.start.Equals(V2_orig)) {
+                if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2_orig, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, C); stb_n.start = C; }
             }
 
-            if(stb_n.finish.Equals(V1)) {
-                if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_n.finish = D; }
-            } else if(stb_n.finish.Equals(V2)) {
-                if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_n.finish = C; }
+            if(stb_n.finish.Equals(V1_orig)) {
+                if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1_orig, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, D); stb_n.finish = D; }
+            } else if(stb_n.finish.Equals(V2_orig)) {
+                if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2_orig, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, C); stb_n.finish = C; }
             }
         }
     }
@@ -837,13 +994,13 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(!nc) continue;
             bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
             bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
-            if(stb_c.start.Equals(V1)) {
-                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_c.start = A; } }
-                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_c.start = D; } }
+            if(stb_c.start.Equals(V1_orig)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1_orig, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, A); stb_c.start = A; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1_orig, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, D); stb_c.start = D; } }
             }
-            if(stb_c.finish.Equals(V1)) {
-                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, A); stb_c.finish = A; } }
-                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1, D); stb_c.finish = D; } }
+            if(stb_c.finish.Equals(V1_orig)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, A)) { TruncateCurveAtVertex(nc, V1_orig, A); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, A); stb_c.finish = A; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, D)) { TruncateCurveAtVertex(nc, V1_orig, D); UpdateAllSurfaceTrimEndpoints(this, nc->h, V1_orig, D); stb_c.finish = D; } }
             }
         }
         // Use graph traversal to find the actual gap endpoint in capSurf1.
@@ -893,13 +1050,13 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             if(!nc) continue;
             bool bordersSurf1 = (nc->surfA == hSurf1 || nc->surfB == hSurf1);
             bool bordersSurf2 = (nc->surfA == hSurf2 || nc->surfB == hSurf2);
-            if(stb_c.start.Equals(V2)) {
-                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_c.start = B; } }
-                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_c.start = C; } }
+            if(stb_c.start.Equals(V2_orig)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2_orig, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, B); stb_c.start = B; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2_orig, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, C); stb_c.start = C; } }
             }
-            if(stb_c.finish.Equals(V2)) {
-                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, B); stb_c.finish = B; } }
-                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2, C); stb_c.finish = C; } }
+            if(stb_c.finish.Equals(V2_orig)) {
+                if(bordersSurf1) { if(InsertPointIntoCurvePts(nc, B)) { TruncateCurveAtVertex(nc, V2_orig, B); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, B); stb_c.finish = B; } }
+                else if(bordersSurf2) { if(InsertPointIntoCurvePts(nc, C)) { TruncateCurveAtVertex(nc, V2_orig, C); UpdateAllSurfaceTrimEndpoints(this, nc->h, V2_orig, C); stb_c.finish = C; } }
             }
         }
         // Use graph traversal to find the actual gap endpoint in capSurf2.
@@ -972,11 +1129,11 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                         bool bS2 = (nc_chk->surfA == hSurf2 || nc_chk->surfB == hSurf2);
                         if(!bS1 && !bS2) continue;
                         // Check if curve passes through V1 or V2 via its pts array
-                        if(CurvePtsContain(nc_chk, V1)) {
+                        if(CurvePtsContain(nc_chk, V1_orig)) {
                             Vector pt = bS1 ? A : D;
                             if(!CanInsertPointIntoCurvePts(nc_chk, pt)) { sharesDiag = true; break; }
                         }
-                        if(CurvePtsContain(nc_chk, V2)) {
+                        if(CurvePtsContain(nc_chk, V2_orig)) {
                             Vector pt = bS1 ? B : C;
                             if(!CanInsertPointIntoCurvePts(nc_chk, pt)) { sharesDiag = true; break; }
                         }
@@ -1070,134 +1227,113 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 hSSurface hSurfA0 = bridges[bB].otherH;
                 hSSurface hSurfB0 = bridges[bA].otherH;
 
-                SSurface cornerSurf = SSurface::FromPlane(
-                    cornerV1,
-                    A0.Minus(cornerV1),
-                    B0.Minus(cornerV1));
-                // bFromCorner (chamfer-style): all three points are in the same
-                // plane as the top cap; swap uDir/vDir to get the correct outward normal.
-                // bToCorner (mixed case): same geometry as bFromCorner — normal swap needed.
-                if(bFromCorner || bToCorner) cornerSurf = SSurface::FromPlane(
-                    cornerV1, B0.Minus(cornerV1), A0.Minus(cornerV1));
-                cornerSurf.color = surface.FindById(hChamfer)->color;
-                // Option B (item 15): for fillet-style corners (chain pattern,
-                // !bFromCorner && !bToCorner) the FromPlane winding yields an
-                // inward-facing normal at triangulation time. We keep the winding
-                // (leak-safe, edge-match-safe) but tag the surface so its emitted
-                // STriangles carry FLAG_FLIP_DISPLAY_NORMAL. EffectiveNormal()
-                // then reports the outward direction for display/front-back
-                // classification. Fork/mixed branches above already correct
-                // this geometrically via the u/v swap, so they stay flag-false.
-                if(!bFromCorner && !bToCorner) {
-                    cornerSurf.flipTriangleNormals = true;
-                }
-                hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
-                // Re-lookup after reallocation:
-                surface.FindById(hChamfer);
-
-                hSCurve hNC1 = AddLinearCurve(this, A0, cornerV1, hCorner, hSurfA0);
-                hSCurve hNC2 = AddLinearCurve(this, cornerV1, B0, hCorner, hSurfB0);
-                hSCurve hNC3 = AddLinearCurve(this, A0, B0, hCorner, hChamfer);
-
-                SSurface *ssA0 = surface.FindById(hSurfA0);
-
-                // Insert A0/B0 as intermediate points into curves bordering the cap
-                // surfaces on ssA0/ssB0.  This is always needed (whether the cap is
-                // flat or curved) because NC1/NC2 create new edges at A0/B0, so the
-                // mesh needs shared vertices there.  We use INSERT (not truncate,
-                // which would propagate via UpdateAllSurfaceTrimEndpoints and break
-                // other surfaces).  The mesh triangulator will then place a vertex
-                // at A0/B0, giving both surfaces a matching edge at that point.
+                // -------------------------------------------------------
+                // Corner surface synthesis: create flat triangular surface
+                // at V1/A0/B0 junction to fill the topological gap between
+                // the two adjacent chamfer caps and the chamfer surface.
+                // For fillet-style corners, flipTriangleNormals is set so
+                // that the EffectiveNormal() returns the outward direction,
+                // eliminating the flat -Z display artifact.
+                // -------------------------------------------------------
                 {
-                    for(STrimBy &stb_fix : ssA0->trim) {
-                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
-                        if(!nc_fix) continue;
-                        if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
-                        InsertPointIntoCurvePts(nc_fix, A0);
-                    }
-                    SSurface *ssB0_fix = surface.FindById(hSurfB0);
-                    for(STrimBy &stb_fix : ssB0_fix->trim) {
-                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
-                        if(!nc_fix) continue;
-                        if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
-                        InsertPointIntoCurvePts(nc_fix, B0);
-                    }
-                }
-                // Also insert A0/B0 into curves bordering hCapSurfV2 on ssA0/ssB0,
-                // to prevent T-junction self-intersections on the V2 cap edge.
-                {
-                    SSurface *ssA0_v2 = surface.FindById(hSurfA0);
-                    for(STrimBy &stb_fix : ssA0_v2->trim) {
-                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
-                        if(!nc_fix) continue;
-                        if(nc_fix->surfA != hCapSurfV2 && nc_fix->surfB != hCapSurfV2) continue;
-                        InsertPointIntoCurvePts(nc_fix, A0);
-                    }
-                    SSurface *ssB0_v2 = surface.FindById(hSurfB0);
-                    for(STrimBy &stb_fix : ssB0_v2->trim) {
-                        SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
-                        if(!nc_fix) continue;
-                        if(nc_fix->surfA != hCapSurfV2 && nc_fix->surfB != hCapSurfV2) continue;
-                        InsertPointIntoCurvePts(nc_fix, B0);
-                    }
-                }
+                    SSurface cornerSurf = SSurface::FromPlane(
+                        cornerV1,
+                        A0.Minus(cornerV1),
+                        B0.Minus(cornerV1));
+                    if(bFromCorner || bToCorner) cornerSurf = SSurface::FromPlane(
+                        cornerV1, B0.Minus(cornerV1), A0.Minus(cornerV1));
+                    cornerSurf.color = surface.FindById(hChamfer)->color;
+                    cornerSurf.face = faceH.v;
+                    // For fillet-style corners, the raw surface normal after
+                    // FlipNormal() in TriangulateInto is -Z; setting
+                    // flipTriangleNormals makes EffectiveNormal() return +Z
+                    // (outward), matching adjacent surfaces.
+                    if(!bFromCorner && !bToCorner)
+                        cornerSurf.flipTriangleNormals = true;
+                    cornerSurf.excludeFromDisplay = true;
+                    hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
+                    surface.FindById(hChamfer);
 
-                for(int ti = 0; ti < ssA0->trim.n; ti++) {
-                    if(ssA0->trim[ti].curve == bridges[bB].h) {
-                        // bFromCorner: bridge goes V1→A0, NC1 goes A0→V1 → use NC1 reversed.
-                        // fillet-style: bridge goes A0→V1, NC1 also A0→V1 → use NC1 forward.
-                        ssA0->trim[ti] = STrimBy::EntireCurve(this, hNC1, bFromCorner); break;
-                    }
-                }
-                SSurface *ssB0 = surface.FindById(hSurfB0);
-                for(int ti = 0; ti < ssB0->trim.n; ti++) {
-                    if(ssB0->trim[ti].curve == bridges[bA].h) {
-                        ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false); break;
-                    }
-                }
+                    hSCurve hNC1 = AddLinearCurve(this, A0, cornerV1, hCorner, hSurfA0);
+                    hSCurve hNC2 = AddLinearCurve(this, cornerV1, B0, hCorner, hSurfB0);
+                    hSCurve hNC3 = AddLinearCurve(this, A0, B0, hCorner, hChamfer);
 
-                // Replace cap edge in hChamfer's trim with NC3_rev (B0→A0).
-                // For chamfer (flat surface), the cap edge is a 2-pt straight line,
-                // so we use pts.n < 2 (not < 3) to allow matching 2-pt cap edges.
-                // Direction: NC3 pts[0]=A0, pts[1]=B0. The original cap edge hCapV1
-                // is traversed forward (A→D). When A0 matches pts[0] of the cap edge,
-                // NC3 forward gives the same direction → use backwards=false.
-                // When A0 matches pts[n-1], NC3 reversed gives the same direction → backwards=true.
-                SSurface *hChamferSurf = surface.FindById(hChamfer);
-                bool capEdgeFound = false;
-                for(int ai = 0; ai < hChamferSurf->trim.n; ai++) {
-                    // Only match cap edges (hCapV1/hCapV2), never side edges
-                    if(hChamferSurf->trim[ai].curve != hCapV1 &&
-                       hChamferSurf->trim[ai].curve != hCapV2) continue;
-                    SCurve *ac = curve.FindByIdNoOops(hChamferSurf->trim[ai].curve);
-                    if(!ac || ac->pts.n < 2) continue;
-                    if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
-                        // Account for trim's backwards flag when computing NC3 direction
-                        bool trimBkwd = hChamferSurf->trim[ai].backwards;
-                        int npts = ac->pts.n;
-                        Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
-                        bool nc3Backwards = !effectiveStart.Equals(A0);
-                        hChamferSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
-                        capEdgeFound = true;
-                        break;
-                    }
-                }
-                (void)capEdgeFound;
+                    SSurface *ssA0 = surface.FindById(hSurfA0);
 
-                // Build cornerSurf's trim
-                //   NC2 fwd  (V1→B0): in UV goes (0,0)→(1,0)
-                //   NC3 bwd  (B0→A0): in UV goes (1,0)→(0,1)  [diagonal]
-                //   NC1 fwd  (A0→V1): in UV goes (0,1)→(0,0)
-                SSurface *hCornerSurf = surface.FindById(hCorner);
-                STrimBy  stb;
-                stb = STrimBy::EntireCurve(this, hNC2, false); // V1→B0
-                hCornerSurf->trim.Add(&stb);
-                hCornerSurf = surface.FindById(hCorner);
-                stb = STrimBy::EntireCurve(this, hNC3, true);  // B0→A0 (NC3 reversed)
-                hCornerSurf->trim.Add(&stb);
-                hCornerSurf = surface.FindById(hCorner);
-                stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
-                hCornerSurf->trim.Add(&stb);
+                    {
+                        for(STrimBy &stb_fix : ssA0->trim) {
+                            SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                            if(!nc_fix) continue;
+                            if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
+                            InsertPointIntoCurvePts(nc_fix, A0);
+                        }
+                        SSurface *ssB0_fix = surface.FindById(hSurfB0);
+                        for(STrimBy &stb_fix : ssB0_fix->trim) {
+                            SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                            if(!nc_fix) continue;
+                            if(nc_fix->surfA != hCapSurfV1 && nc_fix->surfB != hCapSurfV1) continue;
+                            InsertPointIntoCurvePts(nc_fix, B0);
+                        }
+                    }
+                    {
+                        SSurface *ssA0_v2 = surface.FindById(hSurfA0);
+                        for(STrimBy &stb_fix : ssA0_v2->trim) {
+                            SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                            if(!nc_fix) continue;
+                            if(nc_fix->surfA != hCapSurfV2 && nc_fix->surfB != hCapSurfV2) continue;
+                            InsertPointIntoCurvePts(nc_fix, A0);
+                        }
+                        SSurface *ssB0_v2 = surface.FindById(hSurfB0);
+                        for(STrimBy &stb_fix : ssB0_v2->trim) {
+                            SCurve *nc_fix = curve.FindByIdNoOops(stb_fix.curve);
+                            if(!nc_fix) continue;
+                            if(nc_fix->surfA != hCapSurfV2 && nc_fix->surfB != hCapSurfV2) continue;
+                            InsertPointIntoCurvePts(nc_fix, B0);
+                        }
+                    }
+
+                    for(int ti = 0; ti < ssA0->trim.n; ti++) {
+                        if(ssA0->trim[ti].curve == bridges[bB].h) {
+                            ssA0->trim[ti] = STrimBy::EntireCurve(this, hNC1, bFromCorner); break;
+                        }
+                    }
+                    SSurface *ssB0 = surface.FindById(hSurfB0);
+                    for(int ti = 0; ti < ssB0->trim.n; ti++) {
+                        if(ssB0->trim[ti].curve == bridges[bA].h) {
+                            ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false); break;
+                        }
+                    }
+
+                    SSurface *hChamferSurf = surface.FindById(hChamfer);
+                    bool capEdgeFound = false;
+                    for(int ai = 0; ai < hChamferSurf->trim.n; ai++) {
+                        if(hChamferSurf->trim[ai].curve != hCapV1 &&
+                           hChamferSurf->trim[ai].curve != hCapV2) continue;
+                        SCurve *ac = curve.FindByIdNoOops(hChamferSurf->trim[ai].curve);
+                        if(!ac || ac->pts.n < 2) continue;
+                        if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
+                            bool trimBkwd = hChamferSurf->trim[ai].backwards;
+                            int npts = ac->pts.n;
+                            Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
+                            bool nc3Backwards = !effectiveStart.Equals(A0);
+                            hChamferSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
+                            capEdgeFound = true;
+                            break;
+                        }
+                    }
+                    (void)capEdgeFound;
+
+                    SSurface *hCornerSurf = surface.FindById(hCorner);
+                    STrimBy  stb;
+                    stb = STrimBy::EntireCurve(this, hNC2, false);
+                    hCornerSurf->trim.Add(&stb);
+                    hCornerSurf = surface.FindById(hCorner);
+                    stb = STrimBy::EntireCurve(this, hNC3, true);
+                    hCornerSurf->trim.Add(&stb);
+                    hCornerSurf = surface.FindById(hCorner);
+                    stb = STrimBy::EntireCurve(this, hNC1, false);
+                    hCornerSurf->trim.Add(&stb);
+                }
             }
         }
     }
@@ -2317,6 +2453,7 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                             A0.Minus(cornerV1),  // u direction: V1→A0
                             B0.Minus(cornerV1)); // v direction: V1→B0
                     cornerSurf.color = surface.FindById(hFillet)->color;
+                    cornerSurf.face = faceH.v;
                     // Option B (iter-25 item-17): tag fillet-style fillet-corner surfaces.
                     // Symmetric to the MakeFromChamferOf corner-tag (iter-24 item-15).
                     // The chain-pattern branch (!forkPattern) produces a cornerSurf whose
