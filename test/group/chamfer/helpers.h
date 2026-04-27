@@ -673,3 +673,93 @@ static inline void RunDoubleOpTest(
         CHECK_FALSE(anyBackFacing);
     }
 }
+
+//=============================================================================
+// Parametric triple-op test infrastructure
+//
+// RunTripleOpTest(): applies chamfer/fillet to all 3 edges meeting at a box
+// corner, in a caller-specified permutation order with caller-specified
+// operation types (chamfer vs fillet) for each step.
+//
+// edges[0] = {f1, f2}, edges[1] = {f1, f3}, edges[2] = {f2, f3}
+// Operations are applied in order: perm[0], perm[1], perm[2]
+// Each step i uses ops[i] (true=chamfer, false=fillet).
+// Groups are chained: op1 prev=extrudeH, op2 prev=op1H, op3 prev=op2H.
+//=============================================================================
+
+static inline void RunTripleOpTest(
+    Test::Helper *helper,
+    FaceSpec f1, FaceSpec f2, FaceSpec f3,
+    int perm[3],
+    bool ops[3],
+    double offset = 2.0)
+{
+    hGroup extrudeH = CreateBoxExtrude();
+    Group *eg = SK.GetGroup(extrudeH);
+    CHECK_TRUE(eg != nullptr);
+
+    // Resolve all 3 faces from the extrude group
+    hEntity face1 = GetFace(extrudeH, f1);
+    hEntity face2 = GetFace(extrudeH, f2);
+    hEntity face3 = GetFace(extrudeH, f3);
+    CHECK_TRUE(face1.v != 0);
+    CHECK_TRUE(face2.v != 0);
+    CHECK_TRUE(face3.v != 0);
+
+    // Define 3 edges from the 3 face-pairs at this corner
+    hEntity edgeFaceA[3] = { face1, face1, face2 };
+    hEntity edgeFaceB[3] = { face2, face3, face3 };
+
+    // Apply 3 operations in the specified permutation order
+    hGroup prevH = extrudeH;
+    hGroup opH[3];
+    for(int i = 0; i < 3; i++) {
+        int ei = perm[i];
+        if(ops[i]) {
+            opH[i] = AddChamferGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+        } else {
+            opH[i] = AddFilletGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+        }
+        CHECK_FALSE(SK.GetGroup(opH[i])->booleanFailed);
+        prevH = opH[i];
+    }
+
+    Group *gLast = SK.GetGroup(opH[2]);
+    if(gLast->booleanFailed) return;
+
+    // Generate display mesh on the final group
+    gLast->GenerateDisplayItems();
+    SMesh *m = &gLast->displayMesh;
+
+    // Check 1: Mesh has triangles
+    CHECK_TRUE(m->l.n > 0);
+
+    // Check 2: Minimum triangle count (box=12, chamfer/fillet adds more)
+    CHECK_TRUE(m->l.n >= 12);
+
+    // Check 3 & 4: No naked edges and no self-intersections
+    SKdNode *root = SKdNode::From(m);
+    SEdgeList el = {};
+    bool inters, leaks;
+    root->MakeCertainEdgesInto(&el,
+        EdgeKind::NAKED_OR_SELF_INTER, /*coplanarIsInter=*/true,
+        &inters, &leaks);
+    el.Clear();
+    CHECK_FALSE(inters);
+    CHECK_FALSE(leaks);
+
+    // Check 5: No backfacing triangles
+    // Box is 20x20x20 (CreateBoxExtrude), center at (10,10,10).
+    Vector boxCenter = Vector::From(10, 10, 10);
+    bool anyBackFacing = false;
+    for(int ti = 0; ti < m->l.n; ti++) {
+        STriangle *tr = &m->l[ti];
+        Vector normal = tr->EffectiveNormal();
+        Vector centroid = tr->a.Plus(tr->b).Plus(tr->c).ScaledBy(1.0/3.0);
+        if(normal.Dot(centroid.Minus(boxCenter)) < -0.01) {
+            anyBackFacing = true;
+            break;
+        }
+    }
+    CHECK_FALSE(anyBackFacing);
+}

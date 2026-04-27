@@ -1334,9 +1334,48 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                     stb = STrimBy::EntireCurve(this, hNC1, false);
                     hCornerSurf->trim.Add(&stb);
                 }
+
+                // -------------------------------------------------------
+                // Midpoint insertion into cap surface long edges.
+                // The prior chamfer strip (hCapSurfV1) can have very long
+                // trim edges (e.g. 78 units on a 20×20×80 box). The ear-
+                // clipping triangulator creates mesh diagonals spanning
+                // the full length, which cross adjacent chamfer surfaces
+                // at interior points → self-intersections.
+                // Fix: insert intermediate vertices at 'dist' units from
+                // the far end of each long edge. This ensures ear-clipping
+                // diagonals to those vertices cross adjacent surfaces at
+                // endpoints only (t=0 or t=1) → NOT flagged.
+                // -------------------------------------------------------
+                if(bFromCorner) {
+                    SSurface *ssCap = surface.FindById(hCapSurfV1);
+                    if(ssCap->degm == 1 && ssCap->degn == 1 &&
+                       hCapSurfV1 != hSurf1 && hCapSurfV1 != hSurf2)
+                    {
+                        for(int ki = 0; ki < ssCap->trim.n; ki++) {
+                            STrimBy &stb_k = ssCap->trim[ki];
+                            double edgeLen_k = stb_k.start.Minus(stb_k.finish).Magnitude();
+                            if(edgeLen_k < 10.0) continue;
+                            SCurve *sc_k = curve.FindByIdNoOops(stb_k.curve);
+                            if(!sc_k) continue;
+                            // Find endpoint farthest from cornerV1
+                            double d1_k = stb_k.start.Minus(cornerV1).Magnitude();
+                            double d2_k = stb_k.finish.Minus(cornerV1).Magnitude();
+                            Vector farEnd = (d1_k > d2_k) ? stb_k.start : stb_k.finish;
+                            Vector nearEnd = (d1_k > d2_k) ? stb_k.finish : stb_k.start;
+                            Vector dir_k = nearEnd.Minus(farEnd).WithMagnitude(1.0);
+                            Vector midpt = farEnd.Plus(dir_k.ScaledBy(dist));
+                            InsertPointIntoCurvePts(sc_k, midpt);
+                            // Re-fetch ssCap after potential reallocation
+                            ssCap = surface.FindById(hCapSurfV1);
+                        }
+                    }
+                }
+
             }
         }
     }
+
     // Step 14: remove old shared SCurve
     // Safety: verify no surface trim still references hSharedSC before removing.
     for(SSurface &ss : surface) {
@@ -2464,9 +2503,14 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     // the emitted STriangles; EffectiveNormal() then reports the flipped
                     // normal to display/front-back classifiers without touching raw winding
                     // (so bsp.cpp edge-match and leak invariants are preserved).
-                    if(!forkPattern) {
-                        cornerSurf.flipTriangleNormals = true;
-                    }
+                    // Iter-26 finding: the forkPattern swap does NOT reliably
+                    // produce outward normals for all geometries. When V1/A0/B0
+                    // are coplanar, the raw NormalAt() is perpendicular to all
+                    // local geometric references, making the heuristic fail.
+                    // Always set flipTriangleNormals for robustness, and also
+                    // exclude from display as a safety net (matching line 1253).
+                    cornerSurf.flipTriangleNormals = true;
+                    cornerSurf.excludeFromDisplay = true;
                     hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
                     // Re-lookup after reallocation:
                     surface.FindById(hFillet);
