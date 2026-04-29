@@ -355,6 +355,7 @@ public:
         int        count;
         bool       frontFacing;
         bool       intersectsMesh;
+        uint32_t   srcFace;
         STriangle *tr;
         int        ai;
         int        bi;

@@ -511,6 +511,7 @@ void SSurface::TriangulateInto(SShell *shell, SMesh *sm) {
                 st->flags |= STriangle::FLAG_DISPLAY_HIDDEN;
             }
         }
+
     } else {
         dbp("failed to assemble polygon to trim nurbs surface in uv space");
     }

@@ -196,6 +196,171 @@ static int FindTrimGap(SSurface *ss, Vector *gapEnd, Vector *gapStart) {
 }
 
 //-----------------------------------------------------------------------------
+// Diagnostic: validate that ALL surfaces in a shell have closed trim loops.
+// Uses GRAPH CONNECTIVITY (endpoint matching) instead of sequential ordering,
+// because SolveSpace stores trim entries in ARBITRARY order — they are
+// assembled into closed contours by AssemblePolygon at triangulation time.
+//
+// For each trim's finish endpoint, checks if ANY other trim's start matches.
+// For each trim's start endpoint, checks if ANY other trim's finish matches.
+// Unmatched endpoints indicate genuine topology breaks (open trim loops).
+// Returns the total number of unmatched endpoints found across all surfaces.
+// This is a read-only diagnostic — it does NOT modify any data.
+//-----------------------------------------------------------------------------
+static int ValidateAllTrimLoops(SShell *shell, const char *context) {
+    int totalGaps = 0;
+    for(SSurface &ss : shell->surface) {
+        if(ss.trim.n < 2) continue;
+        int nUnmatched = 0;
+        // Check each trim's finish: does ANY other trim's start match it?
+        for(int i = 0; i < ss.trim.n; i++) {
+            Vector fin = ss.trim[i].finish;
+            bool matched = false;
+            for(int j = 0; j < ss.trim.n; j++) {
+                if(j == i) continue;
+                if(fin.Equals(ss.trim[j].start)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if(!matched) {
+                if(nUnmatched == 0) {
+                    dbp("TRIM-DIAG [%s] Surface h=%08x (%d trims): OPEN LOOP",
+                        context, ss.h.v, ss.trim.n);
+                }
+                dbp("  trim[%d].finish=(%.4f,%.4f,%.4f) has no matching start",
+                    i, fin.x, fin.y, fin.z);
+                nUnmatched++;
+            }
+        }
+        // Check each trim's start: does ANY other trim's finish match it?
+        for(int i = 0; i < ss.trim.n; i++) {
+            Vector st = ss.trim[i].start;
+            bool matched = false;
+            for(int j = 0; j < ss.trim.n; j++) {
+                if(j == i) continue;
+                if(st.Equals(ss.trim[j].finish)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if(!matched) {
+                if(nUnmatched == 0) {
+                    dbp("TRIM-DIAG [%s] Surface h=%08x (%d trims): OPEN LOOP",
+                        context, ss.h.v, ss.trim.n);
+                }
+                dbp("  trim[%d].start=(%.4f,%.4f,%.4f) has no matching finish",
+                    i, st.x, st.y, st.z);
+                nUnmatched++;
+            }
+        }
+        totalGaps += nUnmatched;
+    }
+    if(totalGaps == 0) {
+        dbp("TRIM-DIAG [%s] All surfaces have closed trim loops", context);
+    } else {
+        dbp("TRIM-DIAG [%s] Found %d total unmatched endpoint(s)", context, totalGaps);
+    }
+    return totalGaps;
+}
+
+//-----------------------------------------------------------------------------
+// Trim closure enforcement: detect unmatched endpoints via graph connectivity
+// and repair them by creating linear bridge curves. This is a safety net that
+// ensures every surface has a closed trim loop after corner synthesis.
+// Uses a two-pass approach to avoid iterator invalidation:
+//   Pass 1: collect all needed repairs (surface handle, gap finish, gap start)
+//   Pass 2: apply repairs (create linear curves, add trims)
+// Returns the number of repairs made.
+//-----------------------------------------------------------------------------
+static int RepairOpenTrimLoops(SShell *shell, const char *context) {
+    // First run validation to detect any gaps
+    int gapsBefore = ValidateAllTrimLoops(shell, context);
+    if(gapsBefore == 0) return 0;
+
+    // Pass 1: collect repair requests
+    struct TrimRepair {
+        hSSurface hSurf;
+        Vector gapFinish;
+        Vector gapStart;
+    };
+    std::vector<TrimRepair> repairs;
+
+    for(SSurface &ss : shell->surface) {
+        if(ss.trim.n < 2) continue;
+
+        // Find unmatched finish endpoints
+        std::vector<Vector> unmatchedFinish;
+        for(int i = 0; i < ss.trim.n; i++) {
+            Vector fin = ss.trim[i].finish;
+            bool matched = false;
+            for(int j = 0; j < ss.trim.n; j++) {
+                if(j == i) continue;
+                if(fin.Equals(ss.trim[j].start)) { matched = true; break; }
+            }
+            if(!matched) unmatchedFinish.push_back(fin);
+        }
+
+        // Find unmatched start endpoints
+        std::vector<Vector> unmatchedStart;
+        for(int i = 0; i < ss.trim.n; i++) {
+            Vector st = ss.trim[i].start;
+            bool matched = false;
+            for(int j = 0; j < ss.trim.n; j++) {
+                if(j == i) continue;
+                if(st.Equals(ss.trim[j].finish)) { matched = true; break; }
+            }
+            if(!matched) unmatchedStart.push_back(st);
+        }
+
+        // Greedy closest-pair matching: pair each unmatched finish with nearest start
+        std::vector<bool> usedStart(unmatchedStart.size(), false);
+        for(const Vector &fin : unmatchedFinish) {
+            double bestDist = 1e20;
+            int bestSi = -1;
+            for(size_t si = 0; si < unmatchedStart.size(); si++) {
+                if(usedStart[si]) continue;
+                double d = fin.Minus(unmatchedStart[si]).Magnitude();
+                if(d < bestDist) { bestDist = d; bestSi = (int)si; }
+            }
+            if(bestSi < 0) continue;
+            usedStart[bestSi] = true;
+
+            TrimRepair tr;
+            tr.hSurf = ss.h;
+            tr.gapFinish = fin;
+            tr.gapStart = unmatchedStart[bestSi];
+            repairs.push_back(tr);
+
+            dbp("TRIM-REPAIR [%s] Surface h=%08x: will bridge "
+                "(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f) dist=%.6f",
+                context, ss.h.v,
+                fin.x, fin.y, fin.z,
+                unmatchedStart[bestSi].x, unmatchedStart[bestSi].y,
+                unmatchedStart[bestSi].z, bestDist);
+        }
+    }
+
+    // Pass 2: apply repairs
+    int totalRepairs = 0;
+    for(const TrimRepair &tr : repairs) {
+        hSCurve hBridge = AddLinearCurve(shell, tr.gapFinish, tr.gapStart,
+                                         tr.hSurf, tr.hSurf);
+        SSurface *ssPtr = shell->surface.FindById(tr.hSurf);
+        STrimBy stbBridge = STrimBy::EntireCurve(shell, hBridge, /*backwards=*/false);
+        ssPtr->trim.Add(&stbBridge);
+        totalRepairs++;
+    }
+
+    if(totalRepairs > 0) {
+        dbp("TRIM-REPAIR [%s] Made %d repair(s)", context, totalRepairs);
+        // Re-validate after repairs
+        ValidateAllTrimLoops(shell, context);
+    }
+    return totalRepairs;
+}
+
+//-----------------------------------------------------------------------------
 // Helper: insert newStb into ss->trim at position insertAfter+1, preserving
 // all existing entries. Used to close a gap at an arbitrary trim position.
 //-----------------------------------------------------------------------------
@@ -369,6 +534,7 @@ static void BridgeTrimGapIfOpen(SShell *shell, hSSurface hSurf, hSSurface surfA)
 void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     booleanFailed = false;
 
+
     // Step 1: copy source shell (preserves all surface/curve IDs)
     MakeFromCopyOf(src);
 
@@ -381,6 +547,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         if(ss.face == entityB.v) hSurf1 = ss.h;
         if(ss.face == entityC.v) hSurf2 = ss.h;
     }
+
 
     if(hSurf1.v == 0 || hSurf2.v == 0) {
         booleanFailed = true;
@@ -424,6 +591,8 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     Vector V1 = sharedSC->pts[0].p;
     Vector V2 = sharedSC->pts[sharedSC->pts.n - 1].p;
     Vector edgeVec = V2.Minus(V1);
+
+
     double edgeLen = edgeVec.Magnitude();
 
     if(edgeLen < LENGTH_EPS) {
@@ -491,6 +660,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         if(dist < LENGTH_EPS || dist > edgeLen / 2.0) { booleanFailed = true; return; }
         t = edgeVec.WithMagnitude(1);
     }
+
 
     // Step 6: compute face normals at edge midpoint
     Vector edgeMid = V1.Plus(V2).ScaledBy(0.5);
@@ -726,6 +896,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
 
     // hCapV2: B->C (cap at V2 end, exposed edge)
     hSCurve hCapV2 = AddLinearCurve(this, B, C, hChamfer, hCapSurfV2);
+
 
     // Re-lookup after more curve additions
     surf1 = surface.FindById(hSurf1);
@@ -1185,10 +1356,12 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
             bi.pFrom  = sc_br.pts[0].p;
             bi.pTo    = sc_br.pts[1].p;
             bi.otherH = otherH;
-            bridges.push_back(bi);
-        }
+        bridges.push_back(bi);
+    }
 
-        // Look for a pair of bridges sharing a corner vertex V1.
+
+
+    // Look for a pair of bridges sharing a corner vertex V1.
         // Two bridge-connection patterns are handled:
         //   (a) Fillet-style: bridge bB ends AT V1 (pTo=V1), bridge bA starts FROM V1 (pFrom=V1)
         //       → corners: V1 = bridges[bB].pTo = bridges[bA].pFrom
@@ -1197,6 +1370,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
         //   In case (b) the bridge[bB]→NC1 replacement uses NC1 reversed, since bridge[bB]
         //   goes V1→A0 (pFrom=V1, pTo=A0) while NC1 goes A0→V1.
         bool cornerHandled = false;
+        retry_pair_matching:
         for(int i = 0; i < (int)bridges.size() && i < 8 && !cornerHandled; i++) {
             for(int j = i+1; j < (int)bridges.size() && j < 8 && !cornerHandled; j++) {
                 int bA = -1, bB = -1;
@@ -1215,6 +1389,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 }
                 if(bA < 0) continue;
 
+
                 cornerHandled = true;
                 // For bFromCorner: cornerV1=pFrom (shared), A0=bB.pTo, B0=bA.pTo.
                 // For bToCorner:   cornerV1=pTo (shared),   A0=bB.pFrom, B0=bA.pFrom.
@@ -1227,6 +1402,68 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                 hSSurface hSurfA0 = bridges[bB].otherH;
                 hSSurface hSurfB0 = bridges[bA].otherH;
 
+
+                // -------------------------------------------------------
+                // Correct B0 when it's an intermediate trim point rather
+                // than a true corner vertex.  This happens after the
+                // single-bridge handler creates a 2nd bridge via
+                // BridgeTrimGapIfOpen: the new bridge's gap endpoint may
+                // not be a corner vertex.  The correct 3rd vertex is an
+                // intermediate point in the cap curve that connects A0
+                // to B0 (the curve was truncated by prior chamfer ops,
+                // turning the original endpoint into an interior point).
+                // -------------------------------------------------------
+                if((bToCorner || bFromCorner) && !A0.Equals(B0)) {
+                    SSurface *chamSurfFix = surface.FindById(hChamfer);
+                    // Find the cap curve whose endpoints are A0 and B0.
+                    // Its intermediate point (if any) is the correct 3rd
+                    // vertex that was truncated by a prior chamfer.
+                    for(int ci = 0; ci < chamSurfFix->trim.n; ci++) {
+                        SCurve *cc = curve.FindByIdNoOops(chamSurfFix->trim[ci].curve);
+                        if(!cc || cc->pts.n < 3) continue;
+                        Vector cS = cc->pts[0].p, cE = cc->pts[cc->pts.n-1].p;
+                        bool match = (cS.Equals(A0) && cE.Equals(B0)) ||
+                                     (cS.Equals(B0) && cE.Equals(A0));
+                        if(!match) continue;
+                        // Found the A0↔B0 cap curve. Look for an intermediate
+                        // point that isn't A0, B0, or cornerV1.
+                        for(int pi = 1; pi < cc->pts.n - 1; pi++) {
+                            Vector mid = cc->pts[pi].p;
+                            if(!mid.Equals(A0) && !mid.Equals(B0) && !mid.Equals(cornerV1)) {
+                                B0 = mid;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+                // -------------------------------------------------------
+                // Degenerate corner: A0 == B0 (triple-chamfer case).
+                // Both bridges go cornerV1 → A0 (= B0). A corner triangle
+                // would be zero-area with a degenerate NC3 edge. Instead,
+                // merge the two bridges into a single shared curve from
+                // cornerV1 to A0, properly shared between hSurfA0 and
+                // hSurfB0.
+                // -------------------------------------------------------
+                if(A0.Equals(B0)) {
+                    hSCurve hMerged = AddLinearCurve(this, cornerV1, A0, hSurfA0, hSurfB0);
+
+                    SSurface *ssA0 = surface.FindById(hSurfA0);
+                    for(int ti = 0; ti < ssA0->trim.n; ti++) {
+                        if(ssA0->trim[ti].curve == bridges[bB].h) {
+                            ssA0->trim[ti] = STrimBy::EntireCurve(this, hMerged, false);
+                            break;
+                        }
+                    }
+                    SSurface *ssB0 = surface.FindById(hSurfB0);
+                    for(int ti = 0; ti < ssB0->trim.n; ti++) {
+                        if(ssB0->trim[ti].curve == bridges[bA].h) {
+                            ssB0->trim[ti] = STrimBy::EntireCurve(this, hMerged, false);
+                            break;
+                        }
+                    }
+
+                } else
                 // -------------------------------------------------------
                 // Corner surface synthesis: create flat triangular surface
                 // at V1/A0/B0 junction to fill the topological gap between
@@ -1240,17 +1477,18 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                         cornerV1,
                         A0.Minus(cornerV1),
                         B0.Minus(cornerV1));
-                    if(bFromCorner || bToCorner) cornerSurf = SSurface::FromPlane(
+                    if(bFromCorner) cornerSurf = SSurface::FromPlane(
                         cornerV1, B0.Minus(cornerV1), A0.Minus(cornerV1));
                     cornerSurf.color = surface.FindById(hChamfer)->color;
                     cornerSurf.face = faceH.v;
-                    // For fillet-style corners, the raw surface normal after
-                    // FlipNormal() in TriangulateInto is -Z; setting
-                    // flipTriangleNormals makes EffectiveNormal() return +Z
-                    // (outward), matching adjacent surfaces.
-                    if(!bFromCorner && !bToCorner)
+                    // The ear-clipping triangulation produces a Normal()
+                    // that points INWARD for both default and bFromCorner
+                    // cases. Setting flipTriangleNormals makes
+                    // EffectiveNormal() point OUTWARD (away from solid).
+                    // bToCorner already has correct outward normal.
+                    if(!bToCorner)
                         cornerSurf.flipTriangleNormals = true;
-                    cornerSurf.excludeFromDisplay = true;
+                    cornerSurf.excludeFromDisplay = false;
                     hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
                     surface.FindById(hChamfer);
 
@@ -1300,7 +1538,7 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                     SSurface *ssB0 = surface.FindById(hSurfB0);
                     for(int ti = 0; ti < ssB0->trim.n; ti++) {
                         if(ssB0->trim[ti].curve == bridges[bA].h) {
-                            ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false); break;
+                            ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, bToCorner); break;
                         }
                     }
 
@@ -1321,7 +1559,31 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                             break;
                         }
                     }
-                    (void)capEdgeFound;
+                    // Fallback: if hCapV1/hCapV2 handles are stale
+                    // (replaced by prior chamfer ops), search ALL
+                    // trims on hChamfer for a short curve with A0
+                    // as an endpoint. This handles bToCorner cases
+                    // where permutation _102/_201 causes cap curve
+                    // handles to change.
+                    if(!capEdgeFound) {
+                        hChamferSurf = surface.FindById(hChamfer);
+                        for(int ai = 0; ai < hChamferSurf->trim.n; ai++) {
+                            SCurve *ac = curve.FindByIdNoOops(hChamferSurf->trim[ai].curve);
+                            if(!ac || ac->pts.n < 2) continue;
+                            double capLen = ac->pts[0].p.Minus(ac->pts[ac->pts.n-1].p).Magnitude();
+                            if(capLen > 3.0 * dist) continue; // skip long edges
+                            if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
+                                bool trimBkwd = hChamferSurf->trim[ai].backwards;
+                                int npts = ac->pts.n;
+                                Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
+                                bool nc3Backwards = !effectiveStart.Equals(A0);
+                                hChamferSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
+                                capEdgeFound = true;
+                                break;
+                            }
+                        }
+                    }
+                    (void)capEdgeFound; // suppress unused warning
 
                     SSurface *hCornerSurf = surface.FindById(hCorner);
                     STrimBy  stb;
@@ -1371,10 +1633,128 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
                         }
                     }
                 }
+                // Also insert midpoints into hCapSurfV2 long edges
+                // (for triple-chamfer, the V2 cap surface also has very
+                // long edges that cause ear-clipping self-intersections).
+                if(bFromCorner && hCapSurfV2 != hCapSurfV1) {
+                    SSurface *ssCap2 = surface.FindById(hCapSurfV2);
+                    if(ssCap2->degm == 1 && ssCap2->degn == 1 &&
+                       hCapSurfV2 != hSurf1 && hCapSurfV2 != hSurf2)
+                    {
+                        for(int ki = 0; ki < ssCap2->trim.n; ki++) {
+                            STrimBy &stb_k = ssCap2->trim[ki];
+                            double edgeLen_k = stb_k.start.Minus(stb_k.finish).Magnitude();
+                            if(edgeLen_k < 10.0) continue;
+                            SCurve *sc_k = curve.FindByIdNoOops(stb_k.curve);
+                            if(!sc_k) continue;
+                            double d1_k = stb_k.start.Minus(cornerV1).Magnitude();
+                            double d2_k = stb_k.finish.Minus(cornerV1).Magnitude();
+                            Vector farEnd = (d1_k > d2_k) ? stb_k.start : stb_k.finish;
+                            Vector nearEnd = (d1_k > d2_k) ? stb_k.finish : stb_k.start;
+                            Vector dir_k = nearEnd.Minus(farEnd).WithMagnitude(1.0);
+                            Vector midpt = farEnd.Plus(dir_k.ScaledBy(dist));
+                            InsertPointIntoCurvePts(sc_k, midpt);
+                            ssCap2 = surface.FindById(hCapSurfV2);
+                        }
+                    }
+                }
 
             }
         }
+        if(!cornerHandled && !bridges.empty()) {
+            // -------------------------------------------------------
+            // Single-bridge degenerate corner (triple-chamfer case).
+            // Only 1 bridge was found for hChamfer. The pair-matching
+            // loop above requires 2 bridges and couldn't match.
+            // Fix: find a second surface with a trim gap near the
+            // bridge endpoints, create a merged curve shared between
+            // the bridge's otherH and that second surface, and close
+            // the gap.
+            //
+            // This handles permutations _102/_201 where
+            // BridgeTrimGapIfOpen only created 1 bridge for hChamfer
+            // because the second surface's chain was found "closed"
+            // by the chain-finding algorithm, yet its trim polygon
+            // assembly fails in UV space.
+            // -------------------------------------------------------
+            if(bridges.size() == 1) {
+                Vector P1 = bridges[0].pFrom;
+                Vector P2 = bridges[0].pTo;
+                hSSurface hSurf1 = bridges[0].otherH;
+                hSCurve hBridgeCurve = bridges[0].h;
+
+                // Find a second surface that has a trim gap with at
+                // least one endpoint matching P1 or P2.
+                hSSurface hSurf2 = {};
+                Vector gapEnd2 = {}, gapStart2 = {};
+                int gapIdx2 = -1;
+                for(SSurface &ss_scan : surface) {
+                    if(ss_scan.h == hChamfer) continue;
+                    if(ss_scan.h == hSurf1) continue;
+                    Vector gE = {}, gS = {};
+                    int gi = FindTrimGap(&ss_scan, &gE, &gS);
+                    if(gi < 0) continue;
+                    // Check if either gap endpoint matches a bridge endpoint
+                    bool match = gE.Equals(P1) || gE.Equals(P2) ||
+                                 gS.Equals(P1) || gS.Equals(P2);
+                    if(match) {
+                        hSurf2 = ss_scan.h;
+                        gapEnd2 = gE;
+                        gapStart2 = gS;
+                        gapIdx2 = gi;
+                        break;
+                    }
+                }
+
+                if(hSurf2.v != 0) {
+                    // Fix hSurf2's trim polygon by bridging its gap
+                    // with surfA=hChamfer so the new bridge matches
+                    // the same surface attribution as the existing
+                    // bridge in hSurf1. BridgeTrimGapIfOpen removes
+                    // orphaned trims and creates a proper bridge.
+                    BridgeTrimGapIfOpen(this, hSurf2, hChamfer);
+
+                    // Now re-collect the second bridge: a 2-pt curve
+                    // with surfA=hChamfer, in hSurf2's trim, that is
+                    // NOT the original bridge.
+                    BridgeInfo bi2 = {};
+                    for(SCurve &sc_br2 : curve) {
+                        if(sc_br2.surfA != hChamfer) continue;
+                        if(sc_br2.pts.n != 2) continue;
+                        if(sc_br2.h == hBridgeCurve) continue;
+                        SSurface *ss2chk = surface.FindById(hSurf2);
+                        bool inSurf2 = false;
+                        for(int k = 0; k < ss2chk->trim.n; k++) {
+                            if(ss2chk->trim[k].curve == sc_br2.h) {
+                                inSurf2 = true; break;
+                            }
+                        }
+                        if(!inSurf2) continue;
+                        bi2.h = sc_br2.h;
+                        bi2.pFrom = sc_br2.pts[0].p;
+                        bi2.pTo = sc_br2.pts[1].p;
+                        bi2.otherH = hSurf2;
+                        break;
+                    }
+
+                    if(bi2.h.v != 0) {
+                        bridges.push_back(bi2);
+                        // Retry pair matching now that we have 2 bridges
+                        goto retry_pair_matching;
+                    } else {
+                        // BridgeTrimGapIfOpen didn't create a bridge
+                        // (polygon was already closed). Fall through.
+                        cornerHandled = true;
+                    }
+                } else {
+                }
+            } else {
+            }
+        }
     }
+
+    // Trim closure enforcement: repair any open trim loops after corner synthesis
+    RepairOpenTrimLoops(this, "post-corner-synthesis");
 
     // Step 14: remove old shared SCurve
     // Safety: verify no surface trim still references hSharedSC before removing.
@@ -2508,9 +2888,9 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     // are coplanar, the raw NormalAt() is perpendicular to all
                     // local geometric references, making the heuristic fail.
                     // Always set flipTriangleNormals for robustness, and also
-                    // exclude from display as a safety net (matching line 1253).
+                    // display the corner surface (was hidden as a bandaid).
                     cornerSurf.flipTriangleNormals = true;
-                    cornerSurf.excludeFromDisplay = true;
+                    cornerSurf.excludeFromDisplay = false;
                     hSSurface hCorner = surface.AddAndAssignId(&cornerSurf);
                     // Re-lookup after reallocation:
                     surface.FindById(hFillet);
@@ -2791,6 +3171,9 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
         }
 
         }
+
+        // Trim closure enforcement: repair any open trim loops after fillet corner synthesis
+        RepairOpenTrimLoops(this, "post-fillet-corner-synthesis");
 
         // Safety: verify no surface trim still references hSharedSC before removing.
         bool hSharedStillReferenced = false;

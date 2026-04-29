@@ -536,6 +536,36 @@ void Group::GenerateDisplayItems() {
                 displayMesh.AddTriangle(&trn);
             }
 
+            // Global winding consistency fix: When a boolean splits a
+            // surface into multiple shell pieces that share the same face
+            // tag, a small piece may produce only one triangle.  That single
+            // triangle can miss the per-surface WINDING-FIX (which needs
+            // >= 2 triangles for majority voting) and end up with a flipped
+            // display normal.  Fix by grouping all displayMesh triangles
+            // by meta.face and flipping outliers against the majority.
+            for(int i = 0; i < displayMesh.l.n; i++) {
+                STriangle *tri = &displayMesh.l[i];
+                uint32_t face = tri->meta.face;
+                if(face == 0) continue;
+                Vector triNorm = tri->EffectiveNormal();
+                // Count how many same-face triangles agree/disagree.
+                int agree = 0, disagree = 0;
+                for(int j = 0; j < displayMesh.l.n; j++) {
+                    if(j == i) continue;
+                    if(displayMesh.l[j].meta.face != face) continue;
+                    Vector otherNorm = displayMesh.l[j].EffectiveNormal();
+                    if(otherNorm.Dot(triNorm) >= 0)
+                        agree++;
+                    else
+                        disagree++;
+                }
+                // If more same-face triangles disagree than agree, this
+                // triangle is the outlier — flip its display normal.
+                if(disagree > agree && disagree > 0) {
+                    tri->flags ^= STriangle::FLAG_FLIP_DISPLAY_NORMAL;
+                }
+            }
+
             // Build displayRenderMesh excluding FLAG_DISPLAY_HIDDEN triangles.
             // displayMesh is preserved intact for watertightness/volume/export.
             displayRenderMesh.Clear();

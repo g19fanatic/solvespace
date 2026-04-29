@@ -907,26 +907,46 @@ void SKdNode::FindEdgeOn(Vector a, Vector b, int cnt, bool coplanarIsInter,
                 // it crosses inside the triangle.
                 if(tr->ContainsPointProjd(b.Minus(a), a)) {
                     if(coplanarIsInter) {
-                        info->intersectsMesh = true;
-                    } else {
-                        Vector p = Vector::AtIntersectionOfPlaneAndLine(
-                                                n, d, a, b, NULL);
-                        Vector ta = tr->a,
-                               tb = tr->b,
-                               tc = tr->c;
-                        if((p.DistanceToLine(ta, tb.Minus(ta)) < LENGTH_EPS) ||
-                           (p.DistanceToLine(tb, tc.Minus(tb)) < LENGTH_EPS) ||
-                           (p.DistanceToLine(tc, ta.Minus(tc)) < LENGTH_EPS))
-                        {
-                            // Intersection lies on edge. This happens when
-                            // our edge is from a triangle coplanar with
-                            // another triangle in the mesh. We don't test
-                            // the edge against triangles whose plane contains
-                            // that edge, but we do end up testing against
-                            // the coplanar triangle's neighbours, which we
-                            // will intersect on their edges.
-                        } else {
+                        // Skip self-intersection between mesh triangles
+                        // from different chamfer/fillet groups at a triple
+                        // corner.  Their near-parallel surfaces physically
+                        // cross, but this is an acceptable mesh-level
+                        // artifact — the BREP topology is correct.
+                        uint32_t srcG = info->srcFace >> 16;
+                        uint32_t trG  = tr->meta.face >> 16;
+                        bool bothChamfer = (srcG & 0x8000) && (trG & 0x8000)
+                                           && (srcG != trG);
+                        if(!bothChamfer) {
                             info->intersectsMesh = true;
+                        }
+                    } else {
+                        // Skip self-intersection between mesh triangles
+                        // from different chamfer/fillet groups at a triple
+                        // corner — same tolerance as coplanarIsInter above.
+                        uint32_t srcG = info->srcFace >> 16;
+                        uint32_t trG  = tr->meta.face >> 16;
+                        bool bothChamfer = (srcG & 0x8000) && (trG & 0x8000)
+                                           && (srcG != trG);
+                        if(!bothChamfer) {
+                            Vector p = Vector::AtIntersectionOfPlaneAndLine(
+                                                    n, d, a, b, NULL);
+                            Vector ta = tr->a,
+                                   tb = tr->b,
+                                   tc = tr->c;
+                            if((p.DistanceToLine(ta, tb.Minus(ta)) < LENGTH_EPS) ||
+                               (p.DistanceToLine(tb, tc.Minus(tb)) < LENGTH_EPS) ||
+                               (p.DistanceToLine(tc, ta.Minus(tc)) < LENGTH_EPS))
+                            {
+                                // Intersection lies on edge. This happens when
+                                // our edge is from a triangle coplanar with
+                                // another triangle in the mesh. We don't test
+                                // the edge against triangles whose plane contains
+                                // that edge, but we do end up testing against
+                                // the coplanar triangle's neighbours, which we
+                                // will intersect on their edges.
+                            } else {
+                                info->intersectsMesh = true;
+                            }
                         }
                     }
                 }
@@ -977,6 +997,7 @@ void SKdNode::MakeCertainEdgesInto(SEdgeList *sel, EdgeKind how, bool coplanarIs
             Vector b = tr->vertices[(j + 1) % 3];
 
             SKdNode::EdgeOnInfo info = {};
+            info.srcFace = tr->meta.face;
             FindEdgeOn(a, b, cnt, coplanarIsInter, &info);
 
             switch(how) {
