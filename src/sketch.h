@@ -355,6 +355,7 @@ public:
     size_t GetNumConstraints();
     Vector ExtrusionGetVector();
     void ExtrusionForceVectorTo(const Vector &v);
+    static int CountChamferFilletsAtVertex(Vector vertex);
 
     // Assembling the curves into loops, and into a piecewise linear polygon
     // at the same time.

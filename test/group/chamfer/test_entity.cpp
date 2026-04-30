@@ -23,7 +23,9 @@ TEST_CASE(chamfer_group_has_face_entity) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -48,7 +50,9 @@ TEST_CASE(chamfer_setback_points_are_in_shell_not_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -74,7 +78,9 @@ TEST_CASE(chamfer_should_have_setback_point_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -114,7 +120,9 @@ TEST_CASE(chamfer_edges_should_exist_as_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -141,7 +149,9 @@ TEST_CASE(fillet_should_have_setback_point_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -182,7 +192,9 @@ TEST_CASE(chamfer_has_line_segment_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -208,7 +220,9 @@ TEST_CASE(fillet_has_contact_line_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -253,7 +267,9 @@ TEST_CASE(chamfer_original_vertices_hidden) {
         }
     }
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -289,7 +305,9 @@ TEST_CASE(fillet_original_vertices_hidden) {
     Vector V1 = Vector::From(20, 0,  0);
     Vector V2 = Vector::From(20, 0, 80);
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -334,7 +352,9 @@ TEST_CASE(chamfer_original_edge_hidden) {
     // Box height is 80: extrusion with valA=20 on the default workplane gives Z=80 at top.
     Vector V2 = Vector::From(20, 0, 80);
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -378,21 +398,25 @@ TEST_CASE(chamfer_chained_second_hides_extrude_entities) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    // Apply chamfer1 on (face1, bottom cap). opA = extrude group.
+    // Apply chamfer1 on (face1, bottom cap) edge. opA = extrude group.
     hEntity bottomCap = FindCapFace(extrudeH, false);  // wantTop=false
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
-    // Apply chamfer2 on (face1, top cap). opA = chamfer1 group.
+    // Apply chamfer2 on (face1, top cap) edge. opA = chamfer1 group.
     hEntity topCap = FindCapFace(extrudeH, true);   // wantTop=true
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -435,11 +459,12 @@ TEST_CASE(chamfer_chained_second_hides_extrude_entities) {
         Vector p1 = ep1->PointGetNum();
         bool p0IsTopFront = (fabs(p0.z - 80.0) < LENGTH_EPS && fabs(p0.y) < LENGTH_EPS);
         bool p1IsTopFront = (fabs(p1.z - 80.0) < LENGTH_EPS && fabs(p1.y) < LENGTH_EPS);
-        if(p0IsTopFront || p1IsTopFront) {
+        // Only the specific edge whose BOTH endpoints are top-front should be hidden
+        if(p0IsTopFront && p1IsTopFront) {
             if(!e.forceHidden) anyTopEdgeNotHidden = true;
         }
     }
-    CHECK_FALSE(anyTopEdgeNotHidden);  // all extrude edges touching top-front corner should be hidden
+    CHECK_FALSE(anyTopEdgeNotHidden);  // the top-front edge (both endpoints match) should be hidden
 }
 
 TEST_CASE(fillet_chained_second_hides_extrude_entities) {
@@ -452,7 +477,9 @@ TEST_CASE(fillet_chained_second_hides_extrude_entities) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup fillet1H = AddFilletGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -461,7 +488,9 @@ TEST_CASE(fillet_chained_second_hides_extrude_entities) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup fillet2H = AddFilletGroup(fillet1H, face1, topCap, 2.0);
+    hEntity edge2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -497,9 +526,257 @@ TEST_CASE(fillet_chained_second_hides_extrude_entities) {
         Vector p1 = ep1->PointGetNum();
         bool p0IsTopFront = (fabs(p0.z - 80.0) < LENGTH_EPS && fabs(p0.y) < LENGTH_EPS);
         bool p1IsTopFront = (fabs(p1.z - 80.0) < LENGTH_EPS && fabs(p1.y) < LENGTH_EPS);
-        if(p0IsTopFront || p1IsTopFront) {
+        // Only the specific edge whose BOTH endpoints are top-front should be hidden
+        if(p0IsTopFront && p1IsTopFront) {
             if(!e.forceHidden) anyTopEdgeNotHidden = true;
         }
     }
-    CHECK_FALSE(anyTopEdgeNotHidden);
+    CHECK_FALSE(anyTopEdgeNotHidden);  // the top-front edge (both endpoints match) should be hidden
+}
+
+//-----------------------------------------------------------------------------
+// Bug regression test: After chamfer, ADJACENT edges (edges sharing exactly one
+// endpoint with the chamfered edge V1-V2) should NOT be forceHidden.
+// The buggy || logic in group.cpp hides ALL LINE_SEGMENT entities touching
+// V1 OR V2, instead of only the specific edge whose BOTH endpoints are V1 and V2.
+//
+// This test MUST FAIL with the buggy code and PASS after the fix.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_adjacent_edges_not_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+
+    // Get the chamfered edge endpoints BEFORE applying chamfer
+    Entity *edgeEnt = SK.GetEntity(edge);
+    Vector V1 = edgeEnt->EndpointStart();
+    Vector V2 = edgeEnt->EndpointFinish();
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
+    Group *g = SK.GetGroup(chamferH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Find LINE_SEGMENT entities from the extrude group that share exactly
+    // ONE endpoint with the chamfered edge (i.e., adjacent edges).
+    // These should NOT be forceHidden — only the chamfered edge itself
+    // (with BOTH endpoints matching V1 and V2) should be hidden.
+    int adjacentCount = 0;
+    int adjacentHiddenCount = 0;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+
+        // Skip the chamfered edge itself (both endpoints match V1 and V2)
+        bool isChamferedEdge = (p0.Equals(V1) && p1.Equals(V2)) ||
+                               (p0.Equals(V2) && p1.Equals(V1));
+        if(isChamferedEdge) continue;
+
+        // Check if this edge shares exactly one endpoint with the chamfered edge
+        bool sharesV1 = p0.Equals(V1) || p1.Equals(V1);
+        bool sharesV2 = p0.Equals(V2) || p1.Equals(V2);
+        if(sharesV1 || sharesV2) {
+            adjacentCount++;
+            if(e.forceHidden) adjacentHiddenCount++;
+            // BUG: With || logic, adjacent edges are incorrectly forceHidden.
+            // After fix (using && logic), adjacent edges should NOT be hidden.
+            CHECK_FALSE(e.forceHidden);
+        }
+    }
+
+    // Ensure we actually found some adjacent edges to validate
+    CHECK_TRUE(adjacentCount > 0);
+}
+
+//-----------------------------------------------------------------------------
+// End-to-end regression test (fillet): After filleting one edge, an ADJACENT
+// edge should still be selectable (not forceHidden) and a second fillet on
+// that adjacent edge should succeed (booleanFailed == false).
+//
+// This directly exercises the user's reported scenario for fillet:
+//   1. Extrude a box
+//   2. Fillet one edge (e.g., FRONT-RIGHT vertical edge)
+//   3. Select an adjacent edge (e.g., FRONT-TOP horizontal edge)
+//   4. Fillet the adjacent edge → should succeed
+//
+// With the buggy || logic, step 3 fails because the adjacent edge is hidden.
+// After the fix (&&), the adjacent edge remains visible and step 4 succeeds.
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_then_select_adjacent_edge_for_second_fillet) {
+    hGroup extrudeH = CreateBoxExtrude();
+
+    // Get specific faces for deterministic edge selection
+    hEntity frontFace = GetFace(extrudeH, FS_FRONT);
+    hEntity rightFace = GetFace(extrudeH, FS_RIGHT);
+    hEntity topFace   = GetFace(extrudeH, FS_TOP);
+    CHECK_TRUE(frontFace.v != 0);
+    CHECK_TRUE(rightFace.v != 0);
+    CHECK_TRUE(topFace.v != 0);
+
+    // Edge 1: between FRONT (Y=0) and RIGHT (X=20) — vertical edge at (20,0,z)
+    hEntity edge1 = FindEdgeBetweenFaces(extrudeH, frontFace, rightFace);
+    CHECK_TRUE(edge1.v != 0);
+
+    // Apply first fillet on edge1
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge1, 2.0);
+    Group *g1 = SK.GetGroup(fillet1H);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    // Edge 2: between FRONT (Y=0) and TOP (Z=80) — horizontal edge at (x,0,80)
+    // This edge shares endpoint (20,0,80) with edge1 — it is an ADJACENT edge.
+    hEntity edge2 = FindEdgeBetweenFaces(extrudeH, frontFace, topFace);
+    CHECK_TRUE(edge2.v != 0);
+    if(edge2.v == 0) return;
+
+    // KEY ASSERTION: The adjacent edge must NOT be forceHidden after first fillet.
+    Entity *edge2Ent = SK.GetEntity(edge2);
+    CHECK_FALSE(edge2Ent->forceHidden);
+
+    // Apply second fillet using the adjacent edge
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge2, 2.0);
+    Group *g2 = SK.GetGroup(fillet2H);
+    CHECK_TRUE(g2 != nullptr);
+
+    // The second fillet must succeed — this is the user's actual scenario.
+    CHECK_FALSE(g2->booleanFailed);
+}
+
+//-----------------------------------------------------------------------------
+// End-to-end regression test: After chamfering one edge, an ADJACENT edge
+// should still be selectable (not forceHidden) and a second chamfer on that
+// adjacent edge should succeed (booleanFailed == false).
+//
+// This directly exercises the user's reported scenario:
+//   1. Extrude a box
+//   2. Chamfer one edge (e.g., FRONT-RIGHT vertical edge)
+//   3. Select an adjacent edge (e.g., FRONT-TOP horizontal edge)
+//   4. Chamfer the adjacent edge → should succeed
+//
+// With the buggy || logic, step 3 fails because the adjacent edge is hidden.
+// After the fix (&&), the adjacent edge remains visible and step 4 succeeds.
+//-----------------------------------------------------------------------------
+TEST_CASE(chamfer_then_select_adjacent_edge_for_second_chamfer) {
+    hGroup extrudeH = CreateBoxExtrude();
+
+    // Get specific faces for deterministic edge selection
+    hEntity frontFace = GetFace(extrudeH, FS_FRONT);
+    hEntity rightFace = GetFace(extrudeH, FS_RIGHT);
+    hEntity topFace   = GetFace(extrudeH, FS_TOP);
+    CHECK_TRUE(frontFace.v != 0);
+    CHECK_TRUE(rightFace.v != 0);
+    CHECK_TRUE(topFace.v != 0);
+
+    // Edge 1: between FRONT (Y=0) and RIGHT (X=20) — vertical edge at (20,0,z)
+    hEntity edge1 = FindEdgeBetweenFaces(extrudeH, frontFace, rightFace);
+    CHECK_TRUE(edge1.v != 0);
+
+    // Apply first chamfer on edge1
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge1, 2.0);
+    Group *g1 = SK.GetGroup(chamfer1H);
+    CHECK_TRUE(g1 != nullptr);
+    CHECK_FALSE(g1->booleanFailed);
+    if(g1->booleanFailed) return;
+
+    // Edge 2: between FRONT (Y=0) and TOP (Z=80) — horizontal edge at (x,0,80)
+    // This edge shares endpoint (20,0,80) with edge1 — it is an ADJACENT edge.
+    hEntity edge2 = FindEdgeBetweenFaces(extrudeH, frontFace, topFace);
+    CHECK_TRUE(edge2.v != 0);
+    if(edge2.v == 0) return;
+
+    // KEY ASSERTION: The adjacent edge must NOT be forceHidden after first chamfer.
+    // With the buggy || logic, this edge would be hidden (shares one endpoint).
+    // With the correct && logic, only the chamfered edge itself is hidden.
+    Entity *edge2Ent = SK.GetEntity(edge2);
+    CHECK_FALSE(edge2Ent->forceHidden);
+
+    // Apply second chamfer using the adjacent edge
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge2, 2.0);
+    Group *g2 = SK.GetGroup(chamfer2H);
+    CHECK_TRUE(g2 != nullptr);
+
+    // The second chamfer must succeed — this is the user's actual scenario.
+    CHECK_FALSE(g2->booleanFailed);
+}
+
+//-----------------------------------------------------------------------------
+// Bug regression test (fillet): After fillet, ADJACENT edges (edges sharing
+// exactly one endpoint with the filleted edge V1-V2) should NOT be forceHidden.
+// The buggy || logic in the fillet code path of group.cpp hides ALL
+// LINE_SEGMENT entities touching V1 OR V2, instead of only the specific edge
+// whose BOTH endpoints are V1 and V2.
+//
+// This test MUST FAIL with the buggy code and PASS after the fix.
+//-----------------------------------------------------------------------------
+TEST_CASE(fillet_adjacent_edges_not_hidden) {
+    hGroup extrudeH = CreateBoxExtrude();
+    hEntity face1 = {}, face2 = {};
+    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
+    CHECK_TRUE(found);
+    if(!found) return;
+
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+
+    // Get the filleted edge endpoints BEFORE applying fillet
+    Entity *edgeEnt = SK.GetEntity(edge);
+    Vector V1 = edgeEnt->EndpointStart();
+    Vector V2 = edgeEnt->EndpointFinish();
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
+    Group *g = SK.GetGroup(filletH);
+    CHECK_TRUE(g != nullptr);
+    CHECK_FALSE(g->booleanFailed);
+    if(g->booleanFailed) return;
+
+    // Find LINE_SEGMENT entities from the extrude group that share exactly
+    // ONE endpoint with the filleted edge (i.e., adjacent edges).
+    // These should NOT be forceHidden — only the filleted edge itself
+    // (with BOTH endpoints matching V1 and V2) should be hidden.
+    int adjacentCount = 0;
+    int adjacentHiddenCount = 0;
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+
+        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
+        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
+        if(!ep0 || !ep1) continue;
+        Vector p0 = ep0->PointGetNum();
+        Vector p1 = ep1->PointGetNum();
+
+        // Skip the filleted edge itself (both endpoints match V1 and V2)
+        bool isFilletedEdge = (p0.Equals(V1) && p1.Equals(V2)) ||
+                              (p0.Equals(V2) && p1.Equals(V1));
+        if(isFilletedEdge) continue;
+
+        // Check if this edge shares exactly one endpoint with the filleted edge
+        bool sharesV1 = p0.Equals(V1) || p1.Equals(V1);
+        bool sharesV2 = p0.Equals(V2) || p1.Equals(V2);
+        if(sharesV1 || sharesV2) {
+            adjacentCount++;
+            if(e.forceHidden) adjacentHiddenCount++;
+            // BUG: With || logic, adjacent edges are incorrectly forceHidden.
+            // After fix (using && logic), adjacent edges should NOT be hidden.
+            CHECK_FALSE(e.forceHidden);
+        }
+    }
+
+    // Ensure we actually found some adjacent edges to validate
+    CHECK_TRUE(adjacentCount > 0);
 }

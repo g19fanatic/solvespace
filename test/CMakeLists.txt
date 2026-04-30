@@ -78,6 +78,7 @@ set(testsuite_SOURCES
     group/chamfer/test_displaymesh.cpp
     group/chamfer/test_geom_verify.cpp
     group/chamfer/test_tripleop.cpp
+    group/chamfer/test_vertex_limit.cpp
 )
 
 add_executable(solvespace-testsuite

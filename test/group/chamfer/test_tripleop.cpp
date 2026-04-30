@@ -452,7 +452,8 @@ TEST_CASE(tripleop_interference_gui_check) {
     hGroup opH[3];
     for(int i = 0; i < 3; i++) {
         int ei = perm[i];
-        opH[i] = AddChamferGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+        hEntity edgeEnt = FindEdgeBetweenFaces(extrudeH, edgeFaceA[ei], edgeFaceB[ei]);
+        opH[i] = AddChamferGroupByEdge(prevH, edgeEnt, offset);
         CHECK_FALSE(SK.GetGroup(opH[i])->booleanFailed);
         prevH = opH[i];
     }
@@ -513,7 +514,8 @@ static inline void BuildAndSaveTripleChamfer(
     hGroup opH[3];
     for(int i = 0; i < 3; i++) {
         int ei = perm[i];
-        opH[i] = AddChamferGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+        hEntity edgeEnt = FindEdgeBetweenFaces(extrudeH, edgeFaceA[ei], edgeFaceB[ei]);
+        opH[i] = AddChamferGroupByEdge(prevH, edgeEnt, offset);
         prevH = opH[i];
     }
 
@@ -562,7 +564,8 @@ static inline void DumpBackfacingDiag(
     hGroup opH[3];
     for(int i = 0; i < 3; i++) {
         int ei = perm[i];
-        opH[i] = AddChamferGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+        hEntity edgeEnt = FindEdgeBetweenFaces(extrudeH, edgeFaceA[ei], edgeFaceB[ei]);
+        opH[i] = AddChamferGroupByEdge(prevH, edgeEnt, offset);
         prevH = opH[i];
     }
 

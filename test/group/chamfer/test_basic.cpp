@@ -32,7 +32,7 @@ TEST_CASE(extrude_has_faces) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 3: Chamfer phase 1 tests
+// Task 3: Chamfer phase 1 tests (edge-based)
 //-----------------------------------------------------------------------------
 
 TEST_CASE(chamfer_basic_no_boolean_fail) {
@@ -41,7 +41,9 @@ TEST_CASE(chamfer_basic_no_boolean_fail) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -53,7 +55,9 @@ TEST_CASE(chamfer_basic_has_mesh) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     g->GenerateDisplayItems();
@@ -61,7 +65,7 @@ TEST_CASE(chamfer_basic_has_mesh) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 4: Fillet phase 1 tests
+// Task 4: Fillet phase 1 tests (edge-based)
 //-----------------------------------------------------------------------------
 
 TEST_CASE(fillet_basic_no_boolean_fail) {
@@ -70,7 +74,9 @@ TEST_CASE(fillet_basic_no_boolean_fail) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -82,7 +88,9 @@ TEST_CASE(fillet_basic_has_mesh) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     g->GenerateDisplayItems();
@@ -99,7 +107,9 @@ TEST_CASE(chamfer_no_self_intersection) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     if(g->booleanFailed) return;
@@ -120,7 +130,9 @@ TEST_CASE(chamfer_shell_has_surfaces) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     if(g->booleanFailed) return;
@@ -139,7 +151,9 @@ TEST_CASE(fillet_no_self_intersection) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     if(g->booleanFailed) return;
@@ -160,7 +174,9 @@ TEST_CASE(fillet_shell_has_surfaces) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     if(g->booleanFailed) return;
@@ -170,7 +186,7 @@ TEST_CASE(fillet_shell_has_surfaces) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 7: Edge case tests
+// Task 7: Edge case tests (edge-based)
 //-----------------------------------------------------------------------------
 
 TEST_CASE(chamfer_edge_case_small_dist) {
@@ -179,8 +195,10 @@ TEST_CASE(chamfer_edge_case_small_dist) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
     // Very small chamfer distance — should not crash.
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 0.01);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 0.01);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     // Pass as long as no crash; boolean may or may not fail for small distances.
@@ -192,9 +210,11 @@ TEST_CASE(chamfer_edge_case_large_dist) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
     // Large chamfer distance (nearly the full face size) — should not crash,
     // but booleanFailed may be true.
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 9.9);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 9.9);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     // Either succeeds or fails gracefully (booleanFailed=true), not a crash.
@@ -205,15 +225,8 @@ TEST_CASE(chamfer_edge_case_large_dist) {
 // Task 8: Chaining test — two chamfers sharing the same face (entityB).
 //
 // This is a direct regression test for the ASSEMBLE duplication bug.
-// The scenario matches the user's .slvs file (Group 5 and Group 6 both have
-// entityB = left face; Group 6 was the one that failed):
-//   - Group N   (chamfer1): opA=extrude, entityB=face[0], entityC=face[1]
-//   - Group N+1 (chamfer2): opA=chamfer1, entityB=face[0], entityC=face[3]
-//
-// Both chamfers share face[0] as entityB. chamfer1 processes the front-right
-// edge; chamfer2 processes the front-left edge. Before the fix, chamfer2 would
-// set booleanFailed=true because ASSEMBLE mode duplicated all geometry, making
-// the face lookup find wrong (duplicate) copies.
+// Now using edge-based mode: each chamfer selects the edge between
+// the shared face and a partner face.
 //
 // For a 20x20x20 box extruded from a 4-line square, there are exactly 4
 // FACE_XPROD entities (one per LINE_SEGMENT, one per side face).
@@ -239,45 +252,32 @@ TEST_CASE(chamfer_chaining_no_boolean_fail) {
 
     // face[0] (front) is adjacent to face[1] (right) and face[3] (left).
     // face[2] (back) is OPPOSITE to face[0] — skipped.
-    hEntity sharedFace      = faces[0];  // shared entityB for both chamfers
+    hEntity sharedFace      = faces[0];  // shared face for both chamfers
     hEntity chamfer1Partner = faces[1];  // chamfer1: front-right edge
     hEntity chamfer2Partner = faces[3];  // chamfer2: front-left edge (different edge!)
 
-    // Step 1: First chamfer on (sharedFace, chamfer1Partner) — opA = extrude.
-    // This processes the front-right edge. Uses existing helper for brevity.
-    hGroup chamfer1H = AddChamferGroup(extrudeH, sharedFace, chamfer1Partner, 2.0);
+    // Find the edge entities between the face pairs.
+    hEntity edge1 = FindEdgeBetweenFaces(extrudeH, sharedFace, chamfer1Partner);
+    CHECK_TRUE(edge1.v != 0);
+    hEntity edge2 = FindEdgeBetweenFaces(extrudeH, sharedFace, chamfer2Partner);
+    CHECK_TRUE(edge2.v != 0);
+
+    // Step 1: First chamfer on front-right edge — opA = extrude.
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge1, 2.0);
     Group *c1g = SK.GetGroup(chamfer1H);
     CHECK_TRUE(c1g != nullptr);
     // The first chamfer must succeed (same geometry as chamfer_basic_no_boolean_fail).
     CHECK_FALSE(c1g->booleanFailed);
     if(c1g->booleanFailed) return;
 
-    // Step 2: Second chamfer on (sharedFace, chamfer2Partner) — opA = chamfer1H.
-    // sharedFace (face[0]) is the SAME face as chamfer1's entityB — this is the
-    // EXACT scenario that triggered the bug: second chamfer on the same face.
-    // chamfer2Partner (face[3]=left) is a DIFFERENT adjacent face, unused so far.
-    Group g2 = {};
-    g2.type = Group::Type::CHAMFER;
-    g2.opA = chamfer1H;
-    g2.predef.entityB = sharedFace;   // SAME face[0] as chamfer1's entityB
-    g2.predef.entityC = chamfer2Partner;  // different adjacent face
-    g2.valA = 2.0;
-    g2.meshCombine = Group::CombineAs::ASSEMBLE;
-    g2.name = "test-chamfer-chain2";
-    g2.visible = true;
-    g2.color = RGBi(100, 100, 100);
-    g2.scale = 1;
-    g2.order = SK.group.n + 1;
-    SK.group.AddAndAssignId(&g2);
-    SK.groupOrder.Add(&g2.h);
-    SS.GW.activeGroup = g2.h;
-    SS.GenerateAll(SolveSpaceUI::Generate::ALL);
-    hGroup chamfer2H = g2.h;
-
+    // Step 2: Second chamfer on front-left edge — opA = chamfer1H.
+    // This is the EXACT scenario that triggered the bug: second chamfer on
+    // an edge adjacent to the same face as the first chamfer.
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge2, 2.0);
     Group *c2g = SK.GetGroup(chamfer2H);
     CHECK_TRUE(c2g != nullptr);
-    // KEY REGRESSION CHECK: the second chamfer on the SAME face must NOT fail.
-    // Before the fix, booleanFailed=true here due to ASSEMBLE mode duplicating geometry.
+    // KEY REGRESSION CHECK: the second chamfer on a different edge of the
+    // same face must NOT fail.
     CHECK_FALSE(c2g->booleanFailed);
 
     // The final running shell should have more surfaces than a plain box (6 surfaces).
@@ -287,7 +287,9 @@ TEST_CASE(chamfer_chaining_no_boolean_fail) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 9: Face-order-invariant chamfer test — order 1 (face1, face2)
+// Task 9: Edge-based chamfer test — order 1 (face1, face2 → edge)
+// With edge-based selection, face ordering is irrelevant since we select
+// a single edge. Both "forward" and "invariant" tests use the same edge.
 //-----------------------------------------------------------------------------
 TEST_CASE(chamfer_face_order_forward) {
     hGroup extrudeH = CreateBoxExtrude();
@@ -295,7 +297,9 @@ TEST_CASE(chamfer_face_order_forward) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup chamferH1 = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH1 = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g1 = SK.GetGroup(chamferH1);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -323,8 +327,9 @@ TEST_CASE(chamfer_face_order_forward) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 9b: Face-order-invariant chamfer test — order 2 (face2, face1)
-// This was the buggy order before the orientation normalization fix.
+// Task 9b: Edge-based chamfer test — order 2 (face2, face1 → same edge)
+// With edge-based selection, face ordering is irrelevant. FindEdgeBetweenFaces
+// with reversed face order should return the same edge entity.
 //-----------------------------------------------------------------------------
 TEST_CASE(chamfer_face_order_invariant) {
     hGroup extrudeH = CreateBoxExtrude();
@@ -332,8 +337,10 @@ TEST_CASE(chamfer_face_order_invariant) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    // Reversed order: face2 first, face1 second (previously buggy)
-    hGroup chamferH = AddChamferGroup(extrudeH, face2, face1, 2.0);
+    // Reversed order: face2 first, face1 second — should find same edge
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face2, face1);
+    CHECK_TRUE(edge.v != 0);
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -361,7 +368,7 @@ TEST_CASE(chamfer_face_order_invariant) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 10: Face-order-invariant fillet test — order 1 (face1, face2)
+// Task 10: Edge-based fillet test — order 1 (face1, face2 → edge)
 //-----------------------------------------------------------------------------
 TEST_CASE(fillet_face_order_forward) {
     hGroup extrudeH = CreateBoxExtrude();
@@ -369,7 +376,9 @@ TEST_CASE(fillet_face_order_forward) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    hGroup filletH1 = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH1 = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g1 = SK.GetGroup(filletH1);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -398,8 +407,8 @@ TEST_CASE(fillet_face_order_forward) {
 }
 
 //-----------------------------------------------------------------------------
-// Task 10b: Face-order-invariant fillet test — order 2 (face2, face1)
-// This was the buggy order before the orientation normalization fix.
+// Task 10b: Edge-based fillet test — order 2 (face2, face1 → same edge)
+// With edge-based selection, face ordering is irrelevant.
 //-----------------------------------------------------------------------------
 TEST_CASE(fillet_face_order_invariant) {
     hGroup extrudeH = CreateBoxExtrude();
@@ -407,8 +416,10 @@ TEST_CASE(fillet_face_order_invariant) {
     bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
     CHECK_TRUE(found);
 
-    // Reversed order: face2 first, face1 second (previously buggy)
-    hGroup filletH = AddFilletGroup(extrudeH, face2, face1, 2.0);
+    // Reversed order: face2 first, face1 second — should find same edge
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face2, face1);
+    CHECK_TRUE(edge.v != 0);
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);

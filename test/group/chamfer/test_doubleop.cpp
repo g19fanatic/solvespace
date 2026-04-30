@@ -24,10 +24,14 @@ TEST_CASE(fillet_double_fillet_no_naked_edges) {
     CHECK_TRUE(topCap.v != 0);
     CHECK_TRUE(leftFace.v != 0);
 
-    hGroup fillet1H = AddFilletGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     CHECK_FALSE(SK.GetGroup(fillet1H)->booleanFailed);
 
-    hGroup fillet2H = AddFilletGroup(fillet1H, frontFace, leftFace, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -65,10 +69,14 @@ TEST_CASE(chamfer_double_chamfer_no_naked_edges) {
     CHECK_TRUE(topCap.v != 0);
     CHECK_TRUE(leftFace.v != 0);
 
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     CHECK_FALSE(SK.GetGroup(chamfer1H)->booleanFailed);
 
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -107,10 +115,14 @@ TEST_CASE(mixed_chamfer_fillet_no_naked_edges) {
     CHECK_TRUE(leftFace.v != 0);
 
     // Apply chamfer first, then fillet (mixed — reverse order)
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     CHECK_FALSE(SK.GetGroup(chamfer1H)->booleanFailed);
 
-    hGroup fillet2H = AddFilletGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(chamfer1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -151,10 +163,14 @@ TEST_CASE(mixed_fillet_chamfer_no_naked_edges) {
     CHECK_TRUE(leftFace.v != 0);
 
     // Apply fillet first, then chamfer (mixed)
-    hGroup fillet1H = AddFilletGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     CHECK_FALSE(SK.GetGroup(fillet1H)->booleanFailed);
 
-    hGroup chamfer2H = AddChamferGroup(fillet1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(fillet1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;

@@ -67,6 +67,28 @@ void Group::ExtrusionForceVectorTo(const Vector &v) {
     SK.GetParam(h.param(2))->val = v.z;
 }
 
+//-----------------------------------------------------------------------------
+// Count how many existing CHAMFER/FILLET groups have an edge endpoint at the
+// given vertex position (within LENGTH_EPS tolerance). Used to enforce a
+// maximum of 2 chamfers/fillets per shared vertex (corner).
+//-----------------------------------------------------------------------------
+int Group::CountChamferFilletsAtVertex(Vector vertex) {
+    int count = 0;
+    for(auto &gi : SK.group) {
+        if(gi.type != Group::Type::CHAMFER && gi.type != Group::Type::FILLET)
+            continue;
+        Entity *edge = SK.entity.FindByIdNoOops(gi.predef.entityB);
+        if(!edge) continue;
+        if(!edge->HasEndpoints()) continue;
+        Vector eStart = edge->EndpointStart();
+        Vector eEnd   = edge->EndpointFinish();
+        if(eStart.Equals(vertex) || eEnd.Equals(vertex)) {
+            count++;
+        }
+    }
+    return count;
+}
+
 void Group::MenuGroup(Command id)  {
     MenuGroup(id, Platform::Path());
 }
@@ -326,13 +348,27 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
         }
 
         case Command::GROUP_CHAMFER:
-            if(gs.faces == 2 && gs.n == 2) {
-                g.predef.entityB = gs.face[0];
-                g.predef.entityC = gs.face[1];
+            if(gs.lineSegments == 1 && gs.n == 1) {
+                g.predef.entityB = gs.entity[0];
+                g.predef.entityC.v = 0;
             } else {
                 Error(_("Bad selection for new chamfer group. This group requires "
-                        "exactly two adjacent faces to be selected."));
+                        "a single edge to be selected."));
                 return;
+            }
+            // Check vertex limit: max 2 chamfers/fillets at any single vertex.
+            {
+                Entity *selEdge = SK.GetEntity(g.predef.entityB);
+                Vector v1 = selEdge->EndpointStart();
+                Vector v2 = selEdge->EndpointFinish();
+                if(CountChamferFilletsAtVertex(v1) >= 2 ||
+                   CountChamferFilletsAtVertex(v2) >= 2)
+                {
+                    Error(_("Cannot add a third chamfer or fillet at the same "
+                            "corner. A maximum of 2 chamfers/fillets may "
+                            "share a single vertex."));
+                    return;
+                }
             }
             g.type        = Type::CHAMFER;
             g.opA         = SS.GW.activeGroup;
@@ -342,13 +378,27 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             break;
 
         case Command::GROUP_FILLET:
-            if(gs.faces == 2 && gs.n == 2) {
-                g.predef.entityB = gs.face[0];
-                g.predef.entityC = gs.face[1];
+            if(gs.lineSegments == 1 && gs.n == 1) {
+                g.predef.entityB = gs.entity[0];
+                g.predef.entityC.v = 0;
             } else {
                 Error(_("Bad selection for new fillet group. This group requires "
-                        "exactly two adjacent faces to be selected."));
+                        "a single edge to be selected."));
                 return;
+            }
+            // Check vertex limit: max 2 chamfers/fillets at any single vertex.
+            {
+                Entity *selEdge = SK.GetEntity(g.predef.entityB);
+                Vector v1 = selEdge->EndpointStart();
+                Vector v2 = selEdge->EndpointFinish();
+                if(CountChamferFilletsAtVertex(v1) >= 2 ||
+                   CountChamferFilletsAtVertex(v2) >= 2)
+                {
+                    Error(_("Cannot add a third chamfer or fillet at the same "
+                            "corner. A maximum of 2 chamfers/fillets may "
+                            "share a single vertex."));
+                    return;
+                }
             }
             g.type        = Type::FILLET;
             g.opA         = SS.GW.activeGroup;
@@ -822,30 +872,113 @@ void Group::Generate(EntityList *entity, ParamList *param)
                 // just set numNormal = (nB + nC) normalised, and param[0..2] = t
                 // (a vector perpendicular to numNormal so the cross product is valid)
                 // Register 3 extra params (h.param(1..3)) for the FACE_XPROD cross product.
+                bool faceEntityCreated = false;
+                if(predef.entityC.v == 0) {
+                    // Edge-based mode: resolve edge entity to surfaces via srcShell
+                    SShell *srcShell0 = &SK.GetGroup(opA)->runningShell;
+                    Entity *edgeEnt = SK.entity.FindByIdNoOops(predef.entityB);
+                    if(edgeEnt && edgeEnt->type == Entity::Type::LINE_SEGMENT &&
+                       srcShell0->surface.n > 0) {
+                        Vector eV1 = edgeEnt->EndpointStart();
+                        Vector eV2 = edgeEnt->EndpointFinish();
+                        hSSurface hS1 = {}, hS2 = {};
+                        for(SCurve &sc : srcShell0->curve) {
+                            if(sc.pts.n < 2) continue;
+                            Vector first = sc.pts[0].p;
+                            Vector last = sc.pts[sc.pts.n - 1].p;
+                            if((first.Equals(eV1) && last.Equals(eV2)) ||
+                               (first.Equals(eV2) && last.Equals(eV1))) {
+                                hS1 = sc.surfA;
+                                hS2 = sc.surfB;
+                                break;
+                            }
+                        }
+                        // Collinear fallback: find SCurve on same line as edge (for multi-op)
+                        if(hS1.v == 0 || hS2.v == 0) {
+                            Vector edgeDir = eV2.Minus(eV1);
+                            double edgeLen = edgeDir.Magnitude();
+                            if(edgeLen > LENGTH_EPS) {
+                                Vector edgeUnit = edgeDir.ScaledBy(1.0 / edgeLen);
+                                double bestOverlap = -1.0;
+                                for(SCurve &sc : srcShell0->curve) {
+                                    if(sc.pts.n < 2) continue;
+                                    Vector first = sc.pts[0].p;
+                                    Vector last = sc.pts[sc.pts.n - 1].p;
+                                    Vector df = first.Minus(eV1);
+                                    double tf = df.Dot(edgeUnit);
+                                    Vector projF = eV1.Plus(edgeUnit.ScaledBy(tf));
+                                    if(!first.Equals(projF)) continue;
+                                    Vector dl = last.Minus(eV1);
+                                    double tl = dl.Dot(edgeUnit);
+                                    Vector projL = eV1.Plus(edgeUnit.ScaledBy(tl));
+                                    if(!last.Equals(projL)) continue;
+                                    if(fabs(tf - tl) < LENGTH_EPS) continue;
+                                    bool fInRange = (tf > -LENGTH_EPS && tf < edgeLen + LENGTH_EPS);
+                                    bool lInRange = (tl > -LENGTH_EPS && tl < edgeLen + LENGTH_EPS);
+                                    if(!fInRange && !lInRange) continue;
+                                    double lo = std::min(tf, tl);
+                                    double hi = std::max(tf, tl);
+                                    double overlapLo = std::max(lo, 0.0);
+                                    double overlapHi = std::min(hi, edgeLen);
+                                    double overlap = overlapHi - overlapLo;
+                                    if(overlap < LENGTH_EPS) continue;
+                                    if(overlap > bestOverlap) {
+                                        bestOverlap = overlap;
+                                        hS1 = sc.surfA;
+                                        hS2 = sc.surfB;
+                                    }
+                                }
+                            }
+                        }
+                        if(hS1.v != 0 && hS2.v != 0) {
+                            SSurface *s1 = srcShell0->surface.FindById(hS1);
+                            SSurface *s2 = srcShell0->surface.FindById(hS2);
+                            Vector edgeMid = eV1.Plus(eV2).ScaledBy(0.5);
+                            Point2d uv1e, uv2e;
+                            s1->ClosestPointTo(edgeMid, &uv1e);
+                            s2->ClosestPointTo(edgeMid, &uv2e);
+                            Vector nb = s1->NormalAt(uv1e).WithMagnitude(1);
+                            Vector nc = s2->NormalAt(uv2e).WithMagnitude(1);
+                            Vector chamferNormal = nb.Plus(nc).WithMagnitude(1);
+                            Vector perp = chamferNormal.Normal(0).WithMagnitude(1);
+                            AddParam(param, h.param(1), perp.x);
+                            AddParam(param, h.param(2), perp.y);
+                            AddParam(param, h.param(3), perp.z);
+                            Entity en = {};
+                            en.group = h;
+                            en.type  = Entity::Type::FACE_XPROD;
+                            en.numPoint  = edgeMid;
+                            en.numNormal = Quaternion::From(0,
+                                               chamferNormal.x, chamferNormal.y, chamferNormal.z);
+                            en.param[0]  = h.param(1);
+                            en.param[1]  = h.param(2);
+                            en.param[2]  = h.param(3);
+                            int remapId  = (type == Type::CHAMFER)
+                                               ? REMAP_CHAMFER_FACE
+                                               : REMAP_FILLET_FACE;
+                            en.h = Remap(predef.entityB, remapId);
+                            entity->Add(&en);
+                            faceEntityCreated = true;
+                        }
+                    }
+                }
+                if(!faceEntityCreated) {
                 Entity *faceB = SK.entity.FindByIdNoOops(predef.entityB);
                 Entity *faceC = SK.entity.FindByIdNoOops(predef.entityC);
                 if(faceB && faceB->IsFace() && faceC && faceC->IsFace()) {
                     Vector nb = faceB->FaceGetNormalNum().WithMagnitude(1);
                     Vector nc = faceC->FaceGetNormalNum().WithMagnitude(1);
-                    // Approximate chamfer/fillet outward normal: bisector of the two face normals.
                     Vector chamferNormal = nb.Plus(nc).WithMagnitude(1);
-                    // Choose a vector perpendicular to chamferNormal for the cross product.
                     Vector perp = chamferNormal.Normal(0).WithMagnitude(1);
-
-                    // Register param[1..3] for the FACE_XPROD cross-product vector.
                     AddParam(param, h.param(1), perp.x);
                     AddParam(param, h.param(2), perp.y);
                     AddParam(param, h.param(3), perp.z);
-
                     Entity en = {};
                     en.group = h;
                     en.type  = Entity::Type::FACE_XPROD;
-                    // numPoint: approximate position on the chamfer face (use entityB's face point)
                     en.numPoint  = faceB->FaceGetPointNum();
-                    // numNormal: second vector for cross product (the chamfer normal direction)
                     en.numNormal = Quaternion::From(0,
                                        chamferNormal.x, chamferNormal.y, chamferNormal.z);
-                    // param[0..2]: first vector for cross product (perp to chamferNormal)
                     en.param[0]  = h.param(1);
                     en.param[1]  = h.param(2);
                     en.param[2]  = h.param(3);
@@ -861,6 +994,7 @@ void Group::Generate(EntityList *entity, ParamList *param)
                     AddParam(param, h.param(2), 0.0);
                     AddParam(param, h.param(3), 0.0);
                 }
+                } // !faceEntityCreated
             }
             // For CHAMFER only: generate setback point entities at A, B, D, C.
             // These are computed by replaying Steps 2-8 of MakeFromChamferOf,
@@ -874,21 +1008,83 @@ void Group::Generate(EntityList *entity, ParamList *param)
                     hEntity entityB_h = predef.entityB;
                     hEntity entityC_h = predef.entityC;
 
-                    // Find surf1 and surf2 by face handle (same as MakeFromChamferOf Step 2)
+                    // Find surf1 and surf2 (dual-mode: edge-based or face-based)
                     hSSurface hSurf1 = { 0 }, hSurf2 = { 0 };
-                    for(SSurface &ss : srcShell->surface) {
-                        if(ss.face == entityB_h.v) hSurf1 = ss.h;
-                        if(ss.face == entityC_h.v) hSurf2 = ss.h;
+                    hSCurve hSharedSC = { 0 };
+                    if(entityC_h.v == 0) {
+                        // Edge-based mode: find SCurve by edge entity endpoints
+                        Entity *edgeEnt = SK.entity.FindByIdNoOops(entityB_h);
+                        if(edgeEnt && edgeEnt->type == Entity::Type::LINE_SEGMENT) {
+                            Vector eV1 = edgeEnt->EndpointStart();
+                            Vector eV2 = edgeEnt->EndpointFinish();
+                            for(SCurve &sc : srcShell->curve) {
+                                if(sc.pts.n < 2) continue;
+                                Vector first = sc.pts[0].p;
+                                Vector last = sc.pts[sc.pts.n - 1].p;
+                                if((first.Equals(eV1) && last.Equals(eV2)) ||
+                                   (first.Equals(eV2) && last.Equals(eV1))) {
+                                    hSharedSC = sc.h;
+                                    hSurf1 = sc.surfA;
+                                    hSurf2 = sc.surfB;
+                                    break;
+                                }
+                            }
+                            // Collinear fallback: find SCurve on same line as edge (for multi-op)
+                            if(hSharedSC.v == 0) {
+                                Vector edgeDir = eV2.Minus(eV1);
+                                double edgeLen = edgeDir.Magnitude();
+                                if(edgeLen > LENGTH_EPS) {
+                                    Vector edgeUnit = edgeDir.ScaledBy(1.0 / edgeLen);
+                                    double bestOverlap = -1.0;
+                                    for(SCurve &sc2 : srcShell->curve) {
+                                        if(sc2.pts.n < 2) continue;
+                                        Vector first = sc2.pts[0].p;
+                                        Vector last = sc2.pts[sc2.pts.n - 1].p;
+                                        Vector df = first.Minus(eV1);
+                                        double tf = df.Dot(edgeUnit);
+                                        Vector projF = eV1.Plus(edgeUnit.ScaledBy(tf));
+                                        if(!first.Equals(projF)) continue;
+                                        Vector dl = last.Minus(eV1);
+                                        double tl = dl.Dot(edgeUnit);
+                                        Vector projL = eV1.Plus(edgeUnit.ScaledBy(tl));
+                                        if(!last.Equals(projL)) continue;
+                                        if(fabs(tf - tl) < LENGTH_EPS) continue;
+                                        bool fInRange = (tf > -LENGTH_EPS && tf < edgeLen + LENGTH_EPS);
+                                        bool lInRange = (tl > -LENGTH_EPS && tl < edgeLen + LENGTH_EPS);
+                                        if(!fInRange && !lInRange) continue;
+                                        double lo = std::min(tf, tl);
+                                        double hi = std::max(tf, tl);
+                                        double overlapLo = std::max(lo, 0.0);
+                                        double overlapHi = std::min(hi, edgeLen);
+                                        double overlap = overlapHi - overlapLo;
+                                        if(overlap < LENGTH_EPS) continue;
+                                        if(overlap > bestOverlap) {
+                                            bestOverlap = overlap;
+                                            hSharedSC = sc2.h;
+                                            hSurf1 = sc2.surfA;
+                                            hSurf2 = sc2.surfB;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Face-based mode: find surfaces by face handle
+                        for(SSurface &ss : srcShell->surface) {
+                            if(ss.face == entityB_h.v) hSurf1 = ss.h;
+                            if(ss.face == entityC_h.v) hSurf2 = ss.h;
+                        }
                     }
 
                     if(hSurf1.v != 0 && hSurf2.v != 0) {
-                        // Find shared SCurve (Step 4)
-                        hSCurve hSharedSC = { 0 };
-                        for(SCurve &sc : srcShell->curve) {
-                            if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
-                               (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
-                                hSharedSC = sc.h;
-                                break;
+                        if(hSharedSC.v == 0) {
+                            // Face-based mode: find shared SCurve (Step 4)
+                            for(SCurve &sc : srcShell->curve) {
+                                if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
+                                   (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
+                                    hSharedSC = sc.h;
+                                    break;
+                                }
                             }
                         }
 
@@ -1095,7 +1291,9 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                             }
                                         }
                                     }
-                                    // Also hide the LINE_SEGMENT entity connecting V1 to V2 from the opA group
+                                    // Hide only the specific LINE_SEGMENT entity whose endpoints
+                                    // are exactly V1 and V2 (the chamfered edge). Adjacent edges
+                                    // sharing just one endpoint must remain visible and selectable.
                                     for(int ei = 0; ei < entity->n; ei++) {
                                         Entity &existEnt = entity->Get(ei);
                                         if(existEnt.type != Entity::Type::LINE_SEGMENT) continue;
@@ -1104,9 +1302,8 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                         if(ep0 && ep1) {
                                             Vector p0 = ep0->PointGetNum();
                                             Vector p1 = ep1->PointGetNum();
-                                            if(p0.Equals(V1_orig) || p0.Equals(V2_orig) ||
-                                               p1.Equals(V1_orig) ||
-                                               p1.Equals(V2_orig)) {
+                                            if((p0.Equals(V1_orig) && p1.Equals(V2_orig)) ||
+                                               (p0.Equals(V2_orig) && p1.Equals(V1_orig))) {
                                                 existEnt.forceHidden = true;
                                             }
                                         }
@@ -1155,19 +1352,83 @@ void Group::Generate(EntityList *entity, ParamList *param)
                     hEntity entityB_h = predef.entityB;
                     hEntity entityC_h = predef.entityC;
 
+                    // Find surf1 and surf2 (dual-mode: edge-based or face-based)
                     hSSurface hSurf1 = { 0 }, hSurf2 = { 0 };
-                    for(SSurface &ss : srcShell->surface) {
-                        if(ss.face == entityB_h.v) hSurf1 = ss.h;
-                        if(ss.face == entityC_h.v) hSurf2 = ss.h;
+                    hSCurve hSharedSC = { 0 };
+                    if(entityC_h.v == 0) {
+                        // Edge-based mode: find SCurve by edge entity endpoints
+                        Entity *edgeEnt = SK.entity.FindByIdNoOops(entityB_h);
+                        if(edgeEnt && edgeEnt->type == Entity::Type::LINE_SEGMENT) {
+                            Vector eV1 = edgeEnt->EndpointStart();
+                            Vector eV2 = edgeEnt->EndpointFinish();
+                            for(SCurve &sc : srcShell->curve) {
+                                if(sc.pts.n < 2) continue;
+                                Vector first = sc.pts[0].p;
+                                Vector last = sc.pts[sc.pts.n - 1].p;
+                                if((first.Equals(eV1) && last.Equals(eV2)) ||
+                                   (first.Equals(eV2) && last.Equals(eV1))) {
+                                    hSharedSC = sc.h;
+                                    hSurf1 = sc.surfA;
+                                    hSurf2 = sc.surfB;
+                                    break;
+                                }
+                            }
+                            // Collinear fallback: find SCurve on same line as edge (for multi-op)
+                            if(hSharedSC.v == 0) {
+                                Vector edgeDir = eV2.Minus(eV1);
+                                double edgeLen = edgeDir.Magnitude();
+                                if(edgeLen > LENGTH_EPS) {
+                                    Vector edgeUnit = edgeDir.ScaledBy(1.0 / edgeLen);
+                                    double bestOverlap = -1.0;
+                                    for(SCurve &sc2 : srcShell->curve) {
+                                        if(sc2.pts.n < 2) continue;
+                                        Vector first = sc2.pts[0].p;
+                                        Vector last = sc2.pts[sc2.pts.n - 1].p;
+                                        Vector df = first.Minus(eV1);
+                                        double tf = df.Dot(edgeUnit);
+                                        Vector projF = eV1.Plus(edgeUnit.ScaledBy(tf));
+                                        if(!first.Equals(projF)) continue;
+                                        Vector dl = last.Minus(eV1);
+                                        double tl = dl.Dot(edgeUnit);
+                                        Vector projL = eV1.Plus(edgeUnit.ScaledBy(tl));
+                                        if(!last.Equals(projL)) continue;
+                                        if(fabs(tf - tl) < LENGTH_EPS) continue;
+                                        bool fInRange = (tf > -LENGTH_EPS && tf < edgeLen + LENGTH_EPS);
+                                        bool lInRange = (tl > -LENGTH_EPS && tl < edgeLen + LENGTH_EPS);
+                                        if(!fInRange && !lInRange) continue;
+                                        double lo = std::min(tf, tl);
+                                        double hi = std::max(tf, tl);
+                                        double overlapLo = std::max(lo, 0.0);
+                                        double overlapHi = std::min(hi, edgeLen);
+                                        double overlap = overlapHi - overlapLo;
+                                        if(overlap < LENGTH_EPS) continue;
+                                        if(overlap > bestOverlap) {
+                                            bestOverlap = overlap;
+                                            hSharedSC = sc2.h;
+                                            hSurf1 = sc2.surfA;
+                                            hSurf2 = sc2.surfB;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Face-based mode: find surfaces by face handle
+                        for(SSurface &ss : srcShell->surface) {
+                            if(ss.face == entityB_h.v) hSurf1 = ss.h;
+                            if(ss.face == entityC_h.v) hSurf2 = ss.h;
+                        }
                     }
 
                     if(hSurf1.v != 0 && hSurf2.v != 0) {
-                        hSCurve hSharedSC = { 0 };
-                        for(SCurve &sc : srcShell->curve) {
-                            if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
-                               (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
-                                hSharedSC = sc.h;
-                                break;
+                        if(hSharedSC.v == 0) {
+                            // Face-based mode: find shared SCurve
+                            for(SCurve &sc : srcShell->curve) {
+                                if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
+                                   (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
+                                    hSharedSC = sc.h;
+                                    break;
+                                }
                             }
                         }
 
@@ -1227,7 +1488,9 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                                         }
                                                     }
                                                 }
-                                                // Also hide the LINE_SEGMENT entity connecting V1 to V2 from the opA group
+                                                // Hide only the specific LINE_SEGMENT entity whose endpoints
+                                                // are exactly V1 and V2 (the filleted edge). Adjacent edges
+                                                // sharing just one endpoint must remain visible and selectable.
                                                 for(int ei_f = 0; ei_f < entity->n; ei_f++) {
                                                     Entity &existEnt_f = entity->Get(ei_f);
                                                     if(existEnt_f.type != Entity::Type::LINE_SEGMENT) continue;
@@ -1236,7 +1499,8 @@ void Group::Generate(EntityList *entity, ParamList *param)
                                                     if(ep0_f && ep1_f) {
                                                         Vector p0_f = ep0_f->PointGetNum();
                                                         Vector p1_f = ep1_f->PointGetNum();
-                                                        if(p0_f.Equals(V1) || p0_f.Equals(V2) || p1_f.Equals(V1) || p1_f.Equals(V2)) {
+                                                        if((p0_f.Equals(V1) && p1_f.Equals(V2)) ||
+                                                           (p0_f.Equals(V2) && p1_f.Equals(V1))) {
                                                             existEnt_f.forceHidden = true;
                                                         }
                                                     }

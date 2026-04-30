@@ -29,11 +29,15 @@ TEST_CASE(chamfer_cap_extent_correct_left_top_back_CC) {
     CHECK_TRUE(backFace.v != 0);
 
     // --- Chamfer 1: LEFT + TOP, dist=2 ---
-    hGroup op1H = AddChamferGroup(extrudeH, leftFace, topFace, 2.0);
+    hEntity edge_op1 = FindEdgeBetweenFaces(extrudeH, leftFace, topFace);
+    CHECK_TRUE(edge_op1.v != 0);
+    hGroup op1H = AddChamferGroupByEdge(extrudeH, edge_op1, 2.0);
     CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
 
     // --- Chamfer 2: LEFT + BACK, dist=2 ---
-    hGroup op2H = AddChamferGroup(op1H, leftFace, backFace, 2.0);
+    hEntity edge_op2 = FindEdgeBetweenFaces(extrudeH, leftFace, backFace);
+    CHECK_TRUE(edge_op2.v != 0);
+    hGroup op2H = AddChamferGroupByEdge(op1H, edge_op2, 2.0);
     Group *g2 = SK.GetGroup(op2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -120,11 +124,15 @@ TEST_CASE(chamfer_geometry_verification_left_top_back_CC) {
     CHECK_TRUE(backFace.v != 0);
 
     // --- Chamfer 1: LEFT + TOP, dist=2 ---
-    hGroup op1H = AddChamferGroup(extrudeH, leftFace, topFace, 2.0);
+    hEntity edge_op1 = FindEdgeBetweenFaces(extrudeH, leftFace, topFace);
+    CHECK_TRUE(edge_op1.v != 0);
+    hGroup op1H = AddChamferGroupByEdge(extrudeH, edge_op1, 2.0);
     CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
 
     // --- Chamfer 2: LEFT + BACK, dist=2 ---
-    hGroup op2H = AddChamferGroup(op1H, leftFace, backFace, 2.0);
+    hEntity edge_op2 = FindEdgeBetweenFaces(extrudeH, leftFace, backFace);
+    CHECK_TRUE(edge_op2.v != 0);
+    hGroup op2H = AddChamferGroupByEdge(op1H, edge_op2, 2.0);
     Group *g2 = SK.GetGroup(op2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -262,13 +270,17 @@ TEST_CASE(chamfer_adjacent_corner_display_excluded) {
     CHECK_TRUE(leftFace.v != 0);
 
     // Chamfer 1: front face + top cap (dist=2.0)
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
     // Chamfer 2: front face + left face (dist=2.0) — shares corner with chamfer1
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -337,13 +349,17 @@ TEST_CASE(fillet_adjacent_corner_flat_triangle_diagnostic) {
     CHECK_TRUE(leftFace.v != 0);
 
     // --- Fillet 1: face@Y=20 + top cap (radius=2.0) ---
-    hGroup fillet1H = AddFilletGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
     // --- Fillet 2: face@Y=20 + face@X=0 (radius=2.0) ---
-    hGroup fillet2H = AddFilletGroup(fillet1H, frontFace, leftFace, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -419,10 +435,14 @@ TEST_CASE(chamfer_asymmetric_dist_large_small_CC) {
     hEntity topFace  = GetFace(extrudeH, FS_TOP);
     hEntity backFace = GetFace(extrudeH, FS_BACK);
 
-    hGroup op1H = AddChamferGroup(extrudeH, leftFace, topFace, 4.0);
+    hEntity edge_op1 = FindEdgeBetweenFaces(extrudeH, leftFace, topFace);
+    CHECK_TRUE(edge_op1.v != 0);
+    hGroup op1H = AddChamferGroupByEdge(extrudeH, edge_op1, 4.0);
     CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
 
-    hGroup op2H = AddChamferGroup(op1H, leftFace, backFace, 1.0);
+    hEntity edge_op2 = FindEdgeBetweenFaces(extrudeH, leftFace, backFace);
+    CHECK_TRUE(edge_op2.v != 0);
+    hGroup op2H = AddChamferGroupByEdge(op1H, edge_op2, 1.0);
     Group *g2 = SK.GetGroup(op2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -485,11 +505,15 @@ TEST_CASE(chamfer_adjacent_entity_endpoints_match_shell) {
     CHECK_TRUE(backFace.v != 0);
 
     // --- Chamfer 1: LEFT + TOP, dist=2 ---
-    hGroup op1H = AddChamferGroup(extrudeH, leftFace, topFace, 2.0);
+    hEntity edge_op1 = FindEdgeBetweenFaces(extrudeH, leftFace, topFace);
+    CHECK_TRUE(edge_op1.v != 0);
+    hGroup op1H = AddChamferGroupByEdge(extrudeH, edge_op1, 2.0);
     CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
 
     // --- Chamfer 2: LEFT + BACK, dist=2 ---
-    hGroup op2H = AddChamferGroup(op1H, leftFace, backFace, 2.0);
+    hEntity edge_op2 = FindEdgeBetweenFaces(extrudeH, leftFace, backFace);
+    CHECK_TRUE(edge_op2.v != 0);
+    hGroup op2H = AddChamferGroupByEdge(op1H, edge_op2, 2.0);
     Group *g2 = SK.GetGroup(op2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -565,10 +589,14 @@ TEST_CASE(chamfer_asymmetric_dist_small_large_CC) {
     hEntity topFace  = GetFace(extrudeH, FS_TOP);
     hEntity backFace = GetFace(extrudeH, FS_BACK);
 
-    hGroup op1H = AddChamferGroup(extrudeH, leftFace, topFace, 1.0);
+    hEntity edge_op1 = FindEdgeBetweenFaces(extrudeH, leftFace, topFace);
+    CHECK_TRUE(edge_op1.v != 0);
+    hGroup op1H = AddChamferGroupByEdge(extrudeH, edge_op1, 1.0);
     CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
 
-    hGroup op2H = AddChamferGroup(op1H, leftFace, backFace, 4.0);
+    hEntity edge_op2 = FindEdgeBetweenFaces(extrudeH, leftFace, backFace);
+    CHECK_TRUE(edge_op2.v != 0);
+    hGroup op2H = AddChamferGroupByEdge(op1H, edge_op2, 4.0);
     Group *g2 = SK.GetGroup(op2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;

@@ -391,6 +391,19 @@ void Group::GenerateShellAndMesh() {
         thisShell.RemapFaces(this, 0);
     } else if(type == Type::CHAMFER) {
         Group *src = SK.GetGroup(opA);
+        // Generate-time vertex limit check: max 2 chamfers/fillets per vertex.
+        {
+            Entity *edge = SK.entity.FindByIdNoOops(predef.entityB);
+            if(edge && edge->HasEndpoints()) {
+                Vector v1 = edge->EndpointStart();
+                Vector v2 = edge->EndpointFinish();
+                if(CountChamferFilletsAtVertex(v1) > 2 ||
+                   CountChamferFilletsAtVertex(v2) > 2)
+                {
+                    booleanFailed = true;
+                }
+            }
+        }
         Param *p = SK.param.FindByIdNoOops(h.param(0));
         if(p) {
             double dist = p->val;
@@ -401,6 +414,19 @@ void Group::GenerateShellAndMesh() {
         }
     } else if(type == Type::FILLET) {
         Group *src = SK.GetGroup(opA);
+        // Generate-time vertex limit check: max 2 chamfers/fillets per vertex.
+        {
+            Entity *edge = SK.entity.FindByIdNoOops(predef.entityB);
+            if(edge && edge->HasEndpoints()) {
+                Vector v1 = edge->EndpointStart();
+                Vector v2 = edge->EndpointFinish();
+                if(CountChamferFilletsAtVertex(v1) > 2 ||
+                   CountChamferFilletsAtVertex(v2) > 2)
+                {
+                    booleanFailed = true;
+                }
+            }
+        }
         Param *p = SK.param.FindByIdNoOops(h.param(0));
         if(p) {
             double radius = p->val;

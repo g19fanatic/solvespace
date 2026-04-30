@@ -138,17 +138,18 @@ static inline hEntity FindCapFace(hGroup extrudeGroupH, bool wantTop) {
 }
 
 //-----------------------------------------------------------------------------
-// Helper: Add a CHAMFER group on top of the extrude group.
+// Helper: Add a CHAMFER group using an edge entity (LINE_SEGMENT).
+// Edge-based mode: entityB = edge entity, entityC = {0} (signals edge mode).
 // Returns the chamfer group handle.
 //-----------------------------------------------------------------------------
-static inline hGroup AddChamferGroup(hGroup extrudeGroupH,
-                               hEntity face1, hEntity face2,
-                               double dist) {
+static inline hGroup AddChamferGroupByEdge(hGroup prevGroup,
+                                           hEntity edgeEntity,
+                                           double dist) {
     Group g = {};
     g.type = Group::Type::CHAMFER;
-    g.opA = extrudeGroupH;
-    g.predef.entityB = face1;
-    g.predef.entityC = face2;
+    g.opA = prevGroup;
+    g.predef.entityB = edgeEntity;
+    // entityC left at zero (from g = {} init) to signal edge-based mode
     g.valA = dist;
     g.meshCombine = Group::CombineAs::ASSEMBLE;
     g.name = "test-chamfer";
@@ -164,17 +165,18 @@ static inline hGroup AddChamferGroup(hGroup extrudeGroupH,
 }
 
 //-----------------------------------------------------------------------------
-// Helper: Add a FILLET group on top of the extrude group.
+// Helper: Add a FILLET group using an edge entity (LINE_SEGMENT).
+// Edge-based mode: entityB = edge entity, entityC = {0} (signals edge mode).
 // Returns the fillet group handle.
 //-----------------------------------------------------------------------------
-static inline hGroup AddFilletGroup(hGroup extrudeGroupH,
-                              hEntity face1, hEntity face2,
-                              double radius) {
+static inline hGroup AddFilletGroupByEdge(hGroup prevGroup,
+                                          hEntity edgeEntity,
+                                          double radius) {
     Group g = {};
     g.type = Group::Type::FILLET;
-    g.opA = extrudeGroupH;
-    g.predef.entityB = face1;
-    g.predef.entityC = face2;
+    g.opA = prevGroup;
+    g.predef.entityB = edgeEntity;
+    // entityC left at zero (from g = {} init) to signal edge-based mode
     g.valA = radius;
     g.meshCombine = Group::CombineAs::ASSEMBLE;
     g.name = "test-fillet";
@@ -535,6 +537,54 @@ static inline int CountLineSegmentsWithOriginEndpoint(bool skipHidden = false) {
     return count;
 }
 
+//-----------------------------------------------------------------------------
+// Helper: Find the LINE_SEGMENT entity (edge) from the extrude group whose
+// 3D endpoints match an SCurve that separates the two given faces.
+// This bridges face-pair tests to the new edge-based API.
+// Returns the LINE_SEGMENT entity handle, or {0} if not found.
+//-----------------------------------------------------------------------------
+static inline hEntity FindEdgeBetweenFaces(hGroup extrudeGroupH,
+                                            hEntity face1, hEntity face2) {
+    Group *eg = SK.GetGroup(extrudeGroupH);
+    SShell *shell = &eg->runningShell;
+
+    // Iterate all LINE_SEGMENT entities in the extrude group
+    for(int i = 0; i < SK.entity.n; i++) {
+        Entity &e = SK.entity.Get(i);
+        if(e.group != extrudeGroupH) continue;
+        if(e.type != Entity::Type::LINE_SEGMENT) continue;
+
+        // Get 3D endpoints of this edge
+        Vector v1 = e.EndpointStart();
+        Vector v2 = e.EndpointFinish();
+
+        // Find matching SCurve in the shell
+        for(SCurve &sc : shell->curve) {
+            if(sc.pts.n < 2) continue;
+
+            Vector first = sc.pts[0].p;
+            Vector last  = sc.pts[sc.pts.n - 1].p;
+
+            bool match = (first.Equals(v1) && last.Equals(v2)) ||
+                         (first.Equals(v2) && last.Equals(v1));
+            if(!match) continue;
+
+            // Found matching SCurve — check if its surfaces match face1 and face2
+            SSurface *sA = shell->surface.FindById(sc.surfA);
+            SSurface *sB = shell->surface.FindById(sc.surfB);
+
+            bool facesMatch =
+                (sA->face == face1.v && sB->face == face2.v) ||
+                (sA->face == face2.v && sB->face == face1.v);
+
+            if(facesMatch) {
+                return e.h;
+            }
+        }
+    }
+    return { 0 };
+}
+
 // ===========================================================================
 // Helpers: FindFaceByNormal + FaceSpec + GetFace + RunDoubleOpTest (originally ~line 3355)
 // ===========================================================================
@@ -598,21 +648,25 @@ static inline void RunDoubleOpTest(
     CHECK_TRUE(face_partner1.v != 0);
     CHECK_TRUE(face_partner2.v != 0);
 
-    // Operation 1: shared face + partner1
+    // Operation 1: find edge between shared face and partner1, then apply
+    hEntity edge1 = FindEdgeBetweenFaces(extrudeH, face_shared, face_partner1);
+    CHECK_TRUE(edge1.v != 0);
     hGroup op1H;
     if(op1_is_chamfer) {
-        op1H = AddChamferGroup(extrudeH, face_shared, face_partner1, offset);
+        op1H = AddChamferGroupByEdge(extrudeH, edge1, offset);
     } else {
-        op1H = AddFilletGroup(extrudeH, face_shared, face_partner1, offset);
+        op1H = AddFilletGroupByEdge(extrudeH, edge1, offset);
     }
     CHECK_FALSE(SK.GetGroup(op1H)->booleanFailed);
 
-    // Operation 2: shared face + partner2
+    // Operation 2: find edge between shared face and partner2, then apply
+    hEntity edge2 = FindEdgeBetweenFaces(extrudeH, face_shared, face_partner2);
+    CHECK_TRUE(edge2.v != 0);
     hGroup op2H;
     if(op2_is_chamfer) {
-        op2H = AddChamferGroup(op1H, face_shared, face_partner2, offset);
+        op2H = AddChamferGroupByEdge(op1H, edge2, offset);
     } else {
-        op2H = AddFilletGroup(op1H, face_shared, face_partner2, offset);
+        op2H = AddFilletGroupByEdge(op1H, edge2, offset);
     }
     Group *g2 = SK.GetGroup(op2H);
     CHECK_FALSE(g2->booleanFailed);
@@ -710,15 +764,17 @@ static inline void RunTripleOpTest(
     hEntity edgeFaceA[3] = { face1, face1, face2 };
     hEntity edgeFaceB[3] = { face2, face3, face3 };
 
-    // Apply 3 operations in the specified permutation order
+    // Apply 3 operations in the specified permutation order (edge-based)
     hGroup prevH = extrudeH;
     hGroup opH[3];
     for(int i = 0; i < 3; i++) {
         int ei = perm[i];
+        hEntity edge = FindEdgeBetweenFaces(extrudeH, edgeFaceA[ei], edgeFaceB[ei]);
+        CHECK_TRUE(edge.v != 0);
         if(ops[i]) {
-            opH[i] = AddChamferGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+            opH[i] = AddChamferGroupByEdge(prevH, edge, offset);
         } else {
-            opH[i] = AddFilletGroup(prevH, edgeFaceA[ei], edgeFaceB[ei], offset);
+            opH[i] = AddFilletGroupByEdge(prevH, edge, offset);
         }
         CHECK_FALSE(SK.GetGroup(opH[i])->booleanFailed);
         prevH = opH[i];

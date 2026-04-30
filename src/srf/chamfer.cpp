@@ -99,6 +99,112 @@ static bool CurvePtsContain(SCurve *sc, Vector P) {
 }
 
 //-----------------------------------------------------------------------------
+// Helper: find an SCurve in the shell whose first/last endpoints match the
+// given 3D points V1 and V2 (in either order, with LENGTH_EPS tolerance).
+// Returns the hSCurve of the matching curve, or {0} if not found.
+// This is used for edge-based chamfer/fillet: given a LINE_SEGMENT entity's
+// endpoints, locate the corresponding SCurve in the copied shell.
+//
+// Two-pass algorithm:
+//   Pass 1 (exact): endpoints must match V1/V2 exactly (within LENGTH_EPS).
+//   Pass 2 (collinear fallback): if exact match fails, find an SCurve whose
+//     endpoints both lie on the infinite line through V1-V2 AND at least one
+//     endpoint projects within the original V1-V2 segment. This handles
+//     modified shells where a prior chamfer/fillet truncated adjacent edges,
+//     shifting SCurve endpoints to setback points along the same line.
+//-----------------------------------------------------------------------------
+static hSCurve FindSCurveByEdgeEndpoints(SShell *shell, Vector v1, Vector v2) {
+    // Pass 1: exact endpoint match
+    for(SCurve &sc : shell->curve) {
+        if(sc.pts.n < 2) continue;
+
+        Vector first = sc.pts[0].p;
+        Vector last  = sc.pts[sc.pts.n - 1].p;
+
+        if((first.Equals(v1) && last.Equals(v2)) ||
+           (first.Equals(v2) && last.Equals(v1)))
+        {
+            return sc.h;
+        }
+    }
+
+    // Pass 2: collinear fallback — find an SCurve on the same line as V1-V2
+    Vector edgeDir = v2.Minus(v1);
+    double edgeLen = edgeDir.Magnitude();
+    if(edgeLen > LENGTH_EPS) {
+        Vector edgeUnit = edgeDir.ScaledBy(1.0 / edgeLen);
+        hSCurve bestMatch = { 0 };
+        double bestOverlap = -1.0;
+
+        for(SCurve &sc : shell->curve) {
+            if(sc.pts.n < 2) continue;
+
+            Vector first = sc.pts[0].p;
+            Vector last  = sc.pts[sc.pts.n - 1].p;
+
+            // Check perpendicular distance of first endpoint to line V1-V2
+            Vector df = first.Minus(v1);
+            double tf = df.Dot(edgeUnit);
+            Vector projF = v1.Plus(edgeUnit.ScaledBy(tf));
+            if(!first.Equals(projF)) continue;
+
+            // Check perpendicular distance of last endpoint to line V1-V2
+            Vector dl = last.Minus(v1);
+            double tl = dl.Dot(edgeUnit);
+            Vector projL = v1.Plus(edgeUnit.ScaledBy(tl));
+            if(!last.Equals(projL)) continue;
+
+            // Both endpoints are on the line through V1-V2.
+            // Check that the SCurve has nonzero length
+            if(fabs(tf - tl) < LENGTH_EPS) continue;
+
+            // At least one endpoint must project within the original segment [0, edgeLen]
+            bool fInRange = (tf > -LENGTH_EPS && tf < edgeLen + LENGTH_EPS);
+            bool lInRange = (tl > -LENGTH_EPS && tl < edgeLen + LENGTH_EPS);
+            if(!fInRange && !lInRange) continue;
+
+            // Compute overlap: the portion of this SCurve that lies within [0, edgeLen]
+            double lo = std::min(tf, tl);
+            double hi = std::max(tf, tl);
+            double overlapLo = std::max(lo, 0.0);
+            double overlapHi = std::min(hi, edgeLen);
+            double overlap = overlapHi - overlapLo;
+            if(overlap < LENGTH_EPS) continue;
+
+            if(overlap > bestOverlap) {
+                bestOverlap = overlap;
+                bestMatch = sc.h;
+            }
+        }
+        return bestMatch;
+    }
+
+    return { 0 };
+}
+
+//-----------------------------------------------------------------------------
+// Helper: given an SShell and a LINE_SEGMENT edge entity, resolve the entity
+// to 3D endpoints, find the matching SCurve, and return the SCurve handle
+// along with its two adjacent surface handles.
+// Returns false if the edge entity doesn't resolve or no matching SCurve exists.
+//-----------------------------------------------------------------------------
+static bool FindSurfacesByEdgeEntity(SShell *shell, hEntity edge,
+                                      hSCurve *hsc, hSSurface *hsA, hSSurface *hsB)
+{
+    Entity *e = SK.GetEntity(edge);
+    Vector v1 = e->EndpointStart();
+    Vector v2 = e->EndpointFinish();
+
+    *hsc = FindSCurveByEdgeEndpoints(shell, v1, v2);
+    if(hsc->v == 0) return false;
+
+    SCurve *sc = shell->curve.FindById(*hsc);
+    *hsA = sc->surfA;
+    *hsB = sc->surfB;
+    return true;
+}
+
+//-----------------------------------------------------------------------------
 // Helper: truncate a curve's pts so it ends at `newEnd` instead of `oldEnd`.
 // Called after InsertPointIntoCurvePts to remove the stale original corner
 // vertex (V1 or V2) from the pts array of a neighboring curve.
@@ -512,14 +618,20 @@ static void BridgeTrimGapIfOpen(SShell *shell, hSSurface hSurf, hSSurface surfA)
 // SShell::MakeFromChamferOf
 //
 // Creates a new shell that is a copy of `src` with a chamfer applied at the
-// edge shared between the two faces referenced by g->predef.entityB and
-// g->predef.entityC.
+// edge shared between two faces. Two modes are supported:
+//
+//   Edge-based (new): g->predef.entityB is a LINE_SEGMENT entity,
+//       g->predef.entityC.v == 0. The edge entity's 3D endpoints are matched
+//       to an SCurve in the copied shell to find the two adjacent surfaces.
+//
+//   Face-based (legacy): g->predef.entityB and g->predef.entityC are face
+//       entity handles. Surfaces are found by matching face IDs.
 //
 // Algorithm (for flat faces only, MVP):
 //   1. Copy source shell (preserving all IDs)
-//   2. Find surf1, surf2 by face handle
+//   2. Find surf1, surf2 (and shared SCurve) via edge or face lookup
 //   3. Validate both are flat (DepartureFromCoplanar)
-//   4. Find shared SCurve between surf1 and surf2
+//   4. Find shared SCurve between surf1 and surf2 (face-based mode only)
 //   5. Get edge endpoints V1, V2
 //   6. Compute face normals n1, n2 at edge midpoint
 //   7. Compute inward offset directions d1, d2
@@ -538,20 +650,30 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     // Step 1: copy source shell (preserves all surface/curve IDs)
     MakeFromCopyOf(src);
 
-    // Step 2: find surf1 and surf2 by face handle
+    // Step 2: find surf1, surf2, and shared SCurve
     hEntity entityB = g->predef.entityB;
     hEntity entityC = g->predef.entityC;
 
     hSSurface hSurf1 = { 0 }, hSurf2 = { 0 };
-    for(SSurface &ss : surface) {
-        if(ss.face == entityB.v) hSurf1 = ss.h;
-        if(ss.face == entityC.v) hSurf2 = ss.h;
-    }
+    hSCurve hSharedSC = { 0 };
 
-
-    if(hSurf1.v == 0 || hSurf2.v == 0) {
-        booleanFailed = true;
-        return;
+    if(entityC.v == 0) {
+        // Edge-based mode: entityB is a LINE_SEGMENT entity whose endpoints
+        // identify the shared edge. Directly resolve to SCurve + surfaces.
+        if(!FindSurfacesByEdgeEntity(this, entityB, &hSharedSC, &hSurf1, &hSurf2)) {
+            booleanFailed = true;
+            return;
+        }
+    } else {
+        // Face-based mode (legacy/backward compat): entityB and entityC are face handles
+        for(SSurface &ss : surface) {
+            if(ss.face == entityB.v) hSurf1 = ss.h;
+            if(ss.face == entityC.v) hSurf2 = ss.h;
+        }
+        if(hSurf1.v == 0 || hSurf2.v == 0) {
+            booleanFailed = true;
+            return;
+        }
     }
 
     // Step 3: validate flat surfaces
@@ -568,18 +690,20 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
     }
 
     // Step 4: find shared SCurve between surf1 and surf2
-    hSCurve hSharedSC = { 0 };
-    for(SCurve &sc : curve) {
-        if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
-           (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
-            hSharedSC = sc.h;
-            break;
+    // (In edge-based mode, hSharedSC was already set by FindSurfacesByEdgeEntity)
+    if(entityC.v != 0) {
+        for(SCurve &sc : curve) {
+            if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
+               (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
+                hSharedSC = sc.h;
+                break;
+            }
         }
-    }
 
-    if(hSharedSC.v == 0) {
-        booleanFailed = true;
-        return;
+        if(hSharedSC.v == 0) {
+            booleanFailed = true;
+            return;
+        }
     }
 
     // Step 5: get edge endpoints V1, V2
@@ -1774,7 +1898,14 @@ void SShell::MakeFromChamferOf(SShell *src, Group *g, double dist) {
 // SShell::MakeFromFilletOf
 //
 // Creates a new shell with a cylindrical fillet applied at the edge shared
-// between the two faces referenced by g->predef.entityB and entityC.
+// between two faces. Two modes are supported:
+//
+//   Edge-based (new): g->predef.entityB is a LINE_SEGMENT entity,
+//       g->predef.entityC.v == 0. The edge entity's 3D endpoints are matched
+//       to an SCurve in the copied shell to find the two adjacent surfaces.
+//
+//   Face-based (legacy): g->predef.entityB and g->predef.entityC are face
+//       entity handles. Surfaces are found by matching face IDs.
 //
 // The fillet surface is a rational quadratic Bezier arc extruded along the
 // edge direction, creating an exact quarter-cylinder (for 90-degree edges).
@@ -1788,21 +1919,31 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
     // Step 1: copy source shell
     MakeFromCopyOf(src);
 
-    // Step 2: find surf1 and surf2 by face handle
+    // Step 2: find surf1, surf2, and shared SCurve
     hEntity entityB = g->predef.entityB;
     hEntity entityC = g->predef.entityC;
 
     hSSurface hSurf1 = { 0 }, hSurf2 = { 0 };
-    for(SSurface &ss : surface) {
-        if(ss.face == entityB.v) hSurf1 = ss.h;
-        if(ss.face == entityC.v) hSurf2 = ss.h;
-    }
+    hSCurve hSharedSC = { 0 };
 
-    if(hSurf1.v == 0 || hSurf2.v == 0) {
-        booleanFailed = true;
-        return;
+    if(entityC.v == 0) {
+        // Edge-based mode: entityB is a LINE_SEGMENT entity whose endpoints
+        // identify the shared edge. Directly resolve to SCurve + surfaces.
+        if(!FindSurfacesByEdgeEntity(this, entityB, &hSharedSC, &hSurf1, &hSurf2)) {
+            booleanFailed = true;
+            return;
+        }
+    } else {
+        // Face-based mode (legacy/backward compat): entityB and entityC are face handles
+        for(SSurface &ss : surface) {
+            if(ss.face == entityB.v) hSurf1 = ss.h;
+            if(ss.face == entityC.v) hSurf2 = ss.h;
+        }
+        if(hSurf1.v == 0 || hSurf2.v == 0) {
+            booleanFailed = true;
+            return;
+        }
     }
-
 
     // Step 3: validate flat surfaces
     {
@@ -1815,19 +1956,21 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
         }
     }
 
-    // Step 4: find shared SCurve
-    hSCurve hSharedSC = { 0 };
-    for(SCurve &sc : curve) {
-        if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
-           (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
-            hSharedSC = sc.h;
-            break;
+    // Step 4: find shared SCurve between surf1 and surf2
+    // (In edge-based mode, hSharedSC was already set by FindSurfacesByEdgeEntity)
+    if(entityC.v != 0) {
+        for(SCurve &sc : curve) {
+            if((sc.surfA == hSurf1 && sc.surfB == hSurf2) ||
+               (sc.surfA == hSurf2 && sc.surfB == hSurf1)) {
+                hSharedSC = sc.h;
+                break;
+            }
         }
-    }
 
-    if(hSharedSC.v == 0) {
-        booleanFailed = true;
-        return;
+        if(hSharedSC.v == 0) {
+            booleanFailed = true;
+            return;
+        }
     }
 
     // Step 5: get edge endpoints

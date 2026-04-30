@@ -26,7 +26,11 @@ TEST_CASE(chamfer_no_stale_vertices) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -68,7 +72,11 @@ TEST_CASE(chamfer_setback_points_are_curve_endpoints) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -112,7 +120,11 @@ TEST_CASE(chamfer_setback_points_have_vertex_flag) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_FALSE(g->booleanFailed);
     if(g->booleanFailed) return;
@@ -151,7 +163,11 @@ TEST_CASE(chamfer_neighboring_curves_end_at_setback) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -181,7 +197,11 @@ TEST_CASE(chamfer_new_curves_have_correct_surface_associations) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -238,7 +258,11 @@ TEST_CASE(fillet_setback_points_are_curve_endpoints) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -276,7 +300,11 @@ TEST_CASE(fillet_no_stale_vertices) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -325,7 +353,11 @@ TEST_CASE(chamfer_curve_count_correct) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -348,7 +380,11 @@ TEST_CASE(fillet_curve_count_correct) {
     CHECK_TRUE(found);
     if(!found) return;
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(!edge.v) return;
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);

@@ -27,7 +27,11 @@ TEST_CASE(chamfer_side_top_cap_no_backface) {
     CHECK_TRUE(topCap.v != 0);  // Must find a FACE_NORMAL_PT at high Z
     if(topCap.v == 0) return;
 
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, topCap, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge.v != 0);
+    if(edge.v == 0) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -65,7 +69,11 @@ TEST_CASE(fillet_side_top_cap_no_backface) {
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, topCap, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge.v != 0);
+    if(edge.v == 0) return;
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -86,86 +94,6 @@ TEST_CASE(fillet_side_top_cap_no_backface) {
     CHECK_FALSE(anyBackFacing);
 }
 
-TEST_CASE(chamfer_cap_edges_hidden) {
-    hGroup extrudeH = CreateBoxExtrude();
-    hEntity face1 = {}, face2 = {};
-    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
-    CHECK_TRUE(found);
-    if(!found) return;
-
-    Vector V1 = Vector::From(20, 0, 0);
-    Vector V2 = Vector::From(20, 0, 80);
-
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
-    Group *g = SK.GetGroup(chamferH);
-    CHECK_TRUE(g != nullptr);
-    CHECK_FALSE(g->booleanFailed);
-    if(g->booleanFailed) return;
-
-    // After chamfer: ALL LINE_SEGMENT entities from the extrude group that
-    // have V1 or V2 as an endpoint should be forceHidden.
-    // This includes cap edges like (0,0,0)->(20,0,0) and (20,0,0)->(20,20,0).
-    int capEdgesFound = 0;
-    int capEdgesHidden = 0;
-    for(int i = 0; i < SK.entity.n; i++) {
-        Entity &e = SK.entity.Get(i);
-        if(e.group != extrudeH) continue;
-        if(e.type != Entity::Type::LINE_SEGMENT) continue;
-        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
-        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
-        if(!ep0 || !ep1) continue;
-        Vector p0 = ep0->PointGetNum();
-        Vector p1 = ep1->PointGetNum();
-        // Any edge touching V1 or V2 should be hidden
-        if(p0.Equals(V1) || p0.Equals(V2) || p1.Equals(V1) || p1.Equals(V2)) {
-            capEdgesFound++;
-            if(e.forceHidden) capEdgesHidden++;
-        }
-    }
-    // There should be 5 edges touching V1 or V2:
-    //   - 2 cap edges at V1 (from bottom face)
-    //   - 2 cap edges at V2 (from top face)
-    //   - 1 side edge V1->V2 (already fixed in previous session)
-    // All should be hidden.
-    CHECK_TRUE(capEdgesFound >= 4);   // at least the 4 cap edges
-    CHECK_TRUE(capEdgesHidden == capEdgesFound);  // all should be hidden
-}
-
-TEST_CASE(fillet_cap_edges_hidden) {
-    hGroup extrudeH = CreateBoxExtrude();
-    hEntity face1 = {}, face2 = {};
-    bool found = FindTwoAdjacentFaces(extrudeH, &face1, &face2);
-    CHECK_TRUE(found);
-    if(!found) return;
-
-    Vector V1 = Vector::From(20, 0, 0);
-    Vector V2 = Vector::From(20, 0, 80);
-
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
-    Group *g = SK.GetGroup(filletH);
-    CHECK_TRUE(g != nullptr);
-    CHECK_FALSE(g->booleanFailed);
-    if(g->booleanFailed) return;
-
-    int capEdgesFound = 0;
-    int capEdgesHidden = 0;
-    for(int i = 0; i < SK.entity.n; i++) {
-        Entity &e = SK.entity.Get(i);
-        if(e.group != extrudeH) continue;
-        if(e.type != Entity::Type::LINE_SEGMENT) continue;
-        Entity *ep0 = SK.entity.FindByIdNoOops(e.point[0]);
-        Entity *ep1 = SK.entity.FindByIdNoOops(e.point[1]);
-        if(!ep0 || !ep1) continue;
-        Vector p0 = ep0->PointGetNum();
-        Vector p1 = ep1->PointGetNum();
-        if(p0.Equals(V1) || p0.Equals(V2) || p1.Equals(V1) || p1.Equals(V2)) {
-            capEdgesFound++;
-            if(e.forceHidden) capEdgesHidden++;
-        }
-    }
-    CHECK_TRUE(capEdgesFound >= 4);
-    CHECK_TRUE(capEdgesHidden == capEdgesFound);
-}
 
 TEST_CASE(fillet_original_edge_hidden) {
     hGroup extrudeH = CreateBoxExtrude();
@@ -178,7 +106,11 @@ TEST_CASE(fillet_original_edge_hidden) {
     // Box height is 80: extrusion with valA=20 on the default workplane gives Z=80 at top.
     Vector V2 = Vector::From(20, 0, 80);
 
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(edge.v == 0) return;
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     CHECK_FALSE(g->booleanFailed);
@@ -235,7 +167,11 @@ TEST_CASE(chamfer_face1_face2_cap_no_backface) {
     // Single chamfer on the two vertical side faces (the shared vertical edge).
     // face1 = front face (Y=0), face2 = right face (X=20).
     // The cap surfaces are topCap (Z=80) and bottomCap (Z=0).
-    hGroup chamferH = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(edge.v == 0) return;
+
+    hGroup chamferH = AddChamferGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(chamferH);
     CHECK_TRUE(g != nullptr);
     if(g == nullptr) return;
@@ -293,7 +229,11 @@ TEST_CASE(fillet_face1_face2_cap_no_backface) {
     // Single fillet on the two vertical side faces (the shared vertical edge).
     // face1 = front face (Y=0), face2 = right face (X=20).
     // The cap surfaces are topCap (Z=80) and bottomCap (Z=0).
-    hGroup filletH = AddFilletGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(edge.v == 0) return;
+
+    hGroup filletH = AddFilletGroupByEdge(extrudeH, edge, 2.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     if(g == nullptr) return;
@@ -364,7 +304,11 @@ TEST_CASE(chamfer_adjacent_vertical_no_backface) {
     if(nFound < 3) return;
 
     // chamfer1: fA (front Y=0) + fB (right X=20) — vertical edge at X=20, Y=0.
-    hGroup chamfer1H = AddChamferGroup(extrudeH, fA, fB, 2.0);
+    hEntity edgeAB = FindEdgeBetweenFaces(extrudeH, fA, fB);
+    CHECK_TRUE(edgeAB.v != 0);
+    if(edgeAB.v == 0) return;
+
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edgeAB, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     if(g1 == nullptr) return;
@@ -373,7 +317,11 @@ TEST_CASE(chamfer_adjacent_vertical_no_backface) {
 
     // chamfer2: fB (right X=20) + fC (back Y=20) — vertical edge at X=20, Y=20.
     // opA = chamfer1H (chamfer2 builds on the result of chamfer1).
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, fB, fC, 2.0);
+    hEntity edgeBC = FindEdgeBetweenFaces(extrudeH, fB, fC);
+    CHECK_TRUE(edgeBC.v != 0);
+    if(edgeBC.v == 0) return;
+
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edgeBC, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     if(g2 == nullptr) return;
@@ -466,7 +414,11 @@ TEST_CASE(fillet_diff_endcap_has_triangles) {
 
     // Apply fillet on the shared vertical edge of face1 and face2 (radius=1.0).
     // The edge runs along the pocket corner from z=0 to z=80 (full box height).
-    hGroup filletH = AddFilletGroup(bwc.cutExtrude, face1, face2, 1.0);
+    hEntity edge = FindEdgeBetweenFaces(bwc.cutExtrude, face1, face2);
+    CHECK_TRUE(edge.v != 0);
+    if(edge.v == 0) return;
+
+    hGroup filletH = AddFilletGroupByEdge(bwc.cutExtrude, edge, 1.0);
     Group *g = SK.GetGroup(filletH);
     CHECK_TRUE(g != nullptr);
     if(g == nullptr) return;

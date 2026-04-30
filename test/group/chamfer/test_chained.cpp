@@ -24,7 +24,9 @@ TEST_CASE(chamfer_chained_no_null_point_handles) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -33,7 +35,9 @@ TEST_CASE(chamfer_chained_no_null_point_handles) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -65,7 +69,9 @@ TEST_CASE(chamfer_chained_no_origin_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -74,7 +80,9 @@ TEST_CASE(chamfer_chained_no_origin_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -114,7 +122,9 @@ TEST_CASE(chamfer_chained_no_null_endpoint_handles) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -123,7 +133,9 @@ TEST_CASE(chamfer_chained_no_null_endpoint_handles) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -164,7 +176,9 @@ TEST_CASE(chamfer_second_visible_line_count) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -173,7 +187,9 @@ TEST_CASE(chamfer_second_visible_line_count) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -202,7 +218,9 @@ TEST_CASE(chamfer_line_endpoints_valid) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -211,7 +229,9 @@ TEST_CASE(chamfer_line_endpoints_valid) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -263,7 +283,9 @@ TEST_CASE(chamfer_chained_total_visible_lines) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -272,7 +294,9 @@ TEST_CASE(chamfer_chained_total_visible_lines) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -379,7 +403,9 @@ TEST_CASE(chamfer_chained_offset_from_origin) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -388,7 +414,9 @@ TEST_CASE(chamfer_chained_offset_from_origin) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -431,7 +459,9 @@ TEST_CASE(chamfer_three_chained) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -440,14 +470,18 @@ TEST_CASE(chamfer_three_chained) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
 
     // Third chamfer: face2 + bottomCap (a different edge)
-    hGroup chamfer3H = AddChamferGroup(chamfer2H, face2, bottomCap, 2.0);
+    hEntity edge_chamfer3 = FindEdgeBetweenFaces(extrudeH, face2, bottomCap);
+    CHECK_TRUE(edge_chamfer3.v != 0);
+    hGroup chamfer3H = AddChamferGroupByEdge(chamfer2H, edge_chamfer3, 2.0);
     Group *g3 = SK.GetGroup(chamfer3H);
     CHECK_TRUE(g3 != nullptr);
     CHECK_FALSE(g3->booleanFailed);
@@ -489,7 +523,9 @@ TEST_CASE(fillet_chained_no_origin_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup fillet1H = AddFilletGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -498,7 +534,9 @@ TEST_CASE(fillet_chained_no_origin_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup fillet2H = AddFilletGroup(fillet1H, face1, topCap, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -539,7 +577,9 @@ TEST_CASE(fillet_chained_no_null_endpoints) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup fillet1H = AddFilletGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -548,7 +588,9 @@ TEST_CASE(fillet_chained_no_null_endpoints) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup fillet2H = AddFilletGroup(fillet1H, face1, topCap, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -588,7 +630,9 @@ TEST_CASE(chamfer_minimal_offset_no_extra_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 0.1);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 0.1);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -597,7 +641,9 @@ TEST_CASE(chamfer_minimal_offset_no_extra_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 0.1);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 0.1);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -634,7 +680,9 @@ TEST_CASE(chamfer_large_offset_no_extra_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 9.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 9.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -643,7 +691,9 @@ TEST_CASE(chamfer_large_offset_no_extra_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 9.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 9.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -681,7 +731,9 @@ TEST_CASE(chamfer_chained_diagnostic_no_visible_origin_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -690,7 +742,9 @@ TEST_CASE(chamfer_chained_diagnostic_no_visible_origin_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -734,7 +788,9 @@ TEST_CASE(chamfer_two_side_faces_no_extra_line) {
     if(!found) return;
 
     // Chamfer the edge between face1 and face2 (two side faces share a vertical edge)
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, face2, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, face2);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -744,7 +800,9 @@ TEST_CASE(chamfer_two_side_faces_no_extra_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, face1, bottomCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     // booleanFailed might be true if face1 no longer has a simple edge with bottomCap
@@ -781,7 +839,9 @@ TEST_CASE(chamfer_then_fillet_no_extra_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup chamfer1H = AddChamferGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -790,7 +850,9 @@ TEST_CASE(chamfer_then_fillet_no_extra_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup fillet2H = AddFilletGroup(chamfer1H, face1, topCap, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(chamfer1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);
@@ -826,7 +888,9 @@ TEST_CASE(fillet_then_chamfer_no_extra_line) {
     hEntity bottomCap = FindCapFace(extrudeH, false);
     CHECK_TRUE(bottomCap.v != 0);
     if(bottomCap.v == 0) return;
-    hGroup fillet1H = AddFilletGroup(extrudeH, face1, bottomCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, face1, bottomCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_TRUE(g1 != nullptr);
     CHECK_FALSE(g1->booleanFailed);
@@ -835,7 +899,9 @@ TEST_CASE(fillet_then_chamfer_no_extra_line) {
     hEntity topCap = FindCapFace(extrudeH, true);
     CHECK_TRUE(topCap.v != 0);
     if(topCap.v == 0) return;
-    hGroup chamfer2H = AddChamferGroup(fillet1H, face1, topCap, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, face1, topCap);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(fillet1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_TRUE(g2 != nullptr);
     CHECK_FALSE(g2->booleanFailed);

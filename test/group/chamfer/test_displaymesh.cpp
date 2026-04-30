@@ -49,7 +49,9 @@ TEST_CASE(displaymesh_chamfer_adjacent_triangle_vertex_count) {
     // --- Chamfer 1: face@Y=20 + top cap ---
     // Chamfers the top-back horizontal edge at (Y=20, Z=80).
     // Creates setback (0,20,78) on back-left edge and (0,18,80) on top cap.
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
@@ -57,7 +59,9 @@ TEST_CASE(displaymesh_chamfer_adjacent_triangle_vertex_count) {
     // --- Chamfer 2: face@Y=20 + face@X=0 ---
     // Chamfers the back-left vertical edge from (0,20,0) to (0,20,78).
     // The shared corner setback is at (0,20,78).
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -153,7 +157,9 @@ TEST_CASE(displaymesh_fillet_adjacent_triangle_vertex_count) {
     // --- Fillet 1: face@Y=20 + top cap (radius=2.0) ---
     // Fillets the top-back horizontal edge at (Y=20, Z=80).
     // Creates setback (0,20,78) on back-left edge and (0,18,80) on top cap.
-    hGroup fillet1H = AddFilletGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
@@ -161,7 +167,9 @@ TEST_CASE(displaymesh_fillet_adjacent_triangle_vertex_count) {
     // --- Fillet 2: face@Y=20 + face@X=0 (radius=2.0) ---
     // Fillets the back-left vertical edge from (0,20,0) to (0,20,78).
     // The shared corner setback is at (0,20,78).
-    hGroup fillet2H = AddFilletGroup(fillet1H, frontFace, leftFace, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -250,13 +258,17 @@ TEST_CASE(chamfer_adjacent_no_unassigned_face_at_corner) {
     CHECK_TRUE(leftFace.v != 0);
 
     // --- Chamfer 1: frontFace + topCap (dist=2.0) ---
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
     // --- Chamfer 2: frontFace + leftFace (dist=2.0) ---
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -328,12 +340,16 @@ TEST_CASE(chamfer_adjacent_no_extra_mesh_vertices_at_corner) {
     CHECK_TRUE(topCap.v != 0);
     CHECK_TRUE(leftFace.v != 0);
 
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -394,12 +410,16 @@ TEST_CASE(displaymesh_chamfer_adjacent_sharp_edge_coords_diagnostic) {
     CHECK_TRUE(topCap.v != 0);
     CHECK_TRUE(leftFace.v != 0);
 
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -517,13 +537,17 @@ TEST_CASE(displaymesh_chamfer_adjacent_frontface_trim_list_count) {
     CHECK_TRUE(leftFace.v != 0);
 
     // --- Chamfer 1: face@Y=20 + top cap (dist=2.0) ---
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
     // --- Chamfer 2: face@Y=20 + face@X=0 (dist=2.0) ---
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -619,13 +643,17 @@ TEST_CASE(displaymesh_fillet_adjacent_sharp_edge_enumeration) {
     CHECK_TRUE(leftFace.v != 0);
 
     // --- Fillet 1: face@Y=20 + top cap (radius=2.0) ---
-    hGroup fillet1H = AddFilletGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
     // --- Fillet 2: face@Y=20 + face@X=0 (radius=2.0) ---
-    hGroup fillet2H = AddFilletGroup(fillet1H, frontFace, leftFace, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(fillet1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -749,7 +777,9 @@ TEST_CASE(displaymesh_mixed_chamfer_fillet_adjacent_sharp_outline_count) {
 
     // --- Chamfer 1: frontFace + topCap (dist=2.0) ---
     // Chamfers the top-front horizontal edge at (Y=20, Z=80).
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
@@ -757,7 +787,9 @@ TEST_CASE(displaymesh_mixed_chamfer_fillet_adjacent_sharp_outline_count) {
     // --- Fillet 2: frontFace + leftFace (radius=2.0) ---
     // Fillets the front-left vertical edge (entity resolution maps to front-RIGHT).
     // Chains off chamfer1's output shell.
-    hGroup fillet2H = AddFilletGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_fillet2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_fillet2.v != 0);
+    hGroup fillet2H = AddFilletGroupByEdge(chamfer1H, edge_fillet2, 2.0);
     Group *g2 = SK.GetGroup(fillet2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -854,7 +886,9 @@ TEST_CASE(displaymesh_mixed_fillet_chamfer_adjacent_sharp_outline_count) {
 
     // --- Fillet 1: frontFace + topCap (radius=2.0) ---
     // Fillets the top-front horizontal edge at (Y=20, Z=80).
-    hGroup fillet1H = AddFilletGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_fillet1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_fillet1.v != 0);
+    hGroup fillet1H = AddFilletGroupByEdge(extrudeH, edge_fillet1, 2.0);
     Group *g1 = SK.GetGroup(fillet1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
@@ -862,7 +896,9 @@ TEST_CASE(displaymesh_mixed_fillet_chamfer_adjacent_sharp_outline_count) {
     // --- Chamfer 2: frontFace + leftFace (dist=2.0) ---
     // Chamfers the front-left vertical edge (entity resolution maps to front-RIGHT).
     // Chains off fillet1's output shell.
-    hGroup chamfer2H = AddChamferGroup(fillet1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(fillet1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
@@ -959,13 +995,17 @@ TEST_CASE(displaymesh_chamfer_adjacent_mesh_triangle_dump) {
     CHECK_TRUE(leftFace.v != 0);
 
     // --- Chamfer 1: frontFace + topCap (dist=2.0) ---
-    hGroup chamfer1H = AddChamferGroup(extrudeH, frontFace, topCap, 2.0);
+    hEntity edge_chamfer1 = FindEdgeBetweenFaces(extrudeH, frontFace, topCap);
+    CHECK_TRUE(edge_chamfer1.v != 0);
+    hGroup chamfer1H = AddChamferGroupByEdge(extrudeH, edge_chamfer1, 2.0);
     Group *g1 = SK.GetGroup(chamfer1H);
     CHECK_FALSE(g1->booleanFailed);
     if(g1->booleanFailed) return;
 
     // --- Chamfer 2: frontFace + leftFace (dist=2.0) ---
-    hGroup chamfer2H = AddChamferGroup(chamfer1H, frontFace, leftFace, 2.0);
+    hEntity edge_chamfer2 = FindEdgeBetweenFaces(extrudeH, frontFace, leftFace);
+    CHECK_TRUE(edge_chamfer2.v != 0);
+    hGroup chamfer2H = AddChamferGroupByEdge(chamfer1H, edge_chamfer2, 2.0);
     Group *g2 = SK.GetGroup(chamfer2H);
     CHECK_FALSE(g2->booleanFailed);
     if(g2->booleanFailed) return;
