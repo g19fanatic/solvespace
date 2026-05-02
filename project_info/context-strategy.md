@@ -144,6 +144,7 @@ task-specific files.
 | `test/group/chamfer/test.cpp` | full (2863 lines) | **77 tests**: basic, mesh, chaining, stale-vertex, backface, origin-line regression, DIFF no-crash, DIFF endcap triangles, ASSEMBLE backface |
 
 **Key subsystem doc**: `project_info/subsystems/chamfer-fillet.md` — full 16-step algorithm, 7 helper functions, 77-test coverage summary (DIFF/ASSEMBLE fillet tests added), cap scoring via |normal.Dot(t)|, DIFF endcap reconstruction (RECON path), Step 16 (intermediate vertices on shared edge), ASSEMBLE-skip design rationale, backface/origin-line regression notes.
+**End-cap geometry deep-dive**: `project_info/subsystems/chamfer-fillet-endcap-geometry.md` — exhaustive end-cap math: cap detection scoring, fillet arc rational quadratic Bezier construction (exact circular arc via `arc_weight = sin(half_angle)`), cap trim updates with `bordersSurf1/bordersSurf2` discriminator, RECON path for DIFF internals, corner post-processing (bridge pairs, corner triangle, CF case, arc copy approach), 10 design decisions with full rationale, formulas reference.
 
 **Debug note**: `CHAMFER_DEBUG` lines stripped; 2 `fprintf` debug statements remain in WIP state (`RECON:` and `RECON_DONE:` at ~chamfer.cpp:1388–1393).
 

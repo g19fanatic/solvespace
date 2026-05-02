@@ -6,6 +6,8 @@
 >
 > **Cross-references**: [architecture.md](../architecture.md) | [sketch.md](sketch.md) |
 > [../code-patterns.md](../code-patterns.md) | [../context-strategy.md](../context-strategy.md)
+>
+> **End-cap deep-dive**: [chamfer-fillet-endcap-geometry.md](chamfer-fillet-endcap-geometry.md) — exhaustive documentation of end-cap math: cap scoring, fillet arc construction (rational quadratic Bézier, `arc_weight = sin(half_angle)`), cap trim updates, RECON path, corner post-processing, CF case, arc copy approach, and 10 design decisions with rationale.
 
 ---
 
