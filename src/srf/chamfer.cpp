@@ -3044,8 +3044,11 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                                     }
                                 }
                             } else {
-                                // NON-FORKPATTERN: existing working code.
-                                // Create NC2 and replace arc in hCapSurfV1 with NC1+NC2.
+                                // NON-FORKPATTERN: Keep the arc on hCapSurfV1 (curved
+                                // boundary). Create NC2 for hSurfB0's bridge only.
+                                // The arc (hArcV1) stays as-is — not replaced with
+                                // NC1+NC2. This preserves the smooth curved boundary
+                                // between the fillet and chamfer cap (matching FreeCAD).
                                 hSCurve hNC2 = AddLinearCurve(this, cornerV1, B0,
                                                                hCapSurfV1, hSurfB0);
 
@@ -3056,62 +3059,6 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                                         ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false);
                                         break;
                                     }
-                                }
-
-                                // Replace hArcV1 in hCapSurfV1's trim with NC1+NC2.
-                                // The arc connects A0↔B0; replace with A0→V1→B0 path.
-                                SSurface *capSurf = surface.FindById(hCapSurfV1);
-                                int ai = -1;
-                                for(int ti = 0; ti < capSurf->trim.n; ti++) {
-                                    if(capSurf->trim[ti].curve == hArcV1) {
-                                        ai = ti;
-                                        break;
-                                    }
-                                }
-                                // Fallback: search by A0↔B0 endpoints
-                                if(ai < 0) {
-                                    for(int ti = 0; ti < capSurf->trim.n; ti++) {
-                                        Vector ts = capSurf->trim[ti].start;
-                                        Vector tf = capSurf->trim[ti].finish;
-                                        if((ts.Equals(A0) && tf.Equals(B0)) ||
-                                           (ts.Equals(B0) && tf.Equals(A0))) {
-                                            ai = ti;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if(ai >= 0) {
-                                    bool arcStartsAtA0 = capSurf->trim[ai].start.Equals(A0);
-                                    if(arcStartsAtA0) {
-                                        // A0→B0: replace with NC1(A0→V1) + NC2(V1→B0)
-                                        capSurf->trim[ai] = STrimBy::EntireCurve(this, hNC1, false);
-                                        capSurf = surface.FindById(hCapSurfV1);
-                                        STrimBy stb = STrimBy::EntireCurve(this, hNC2, false);
-                                        capSurf = surface.FindById(hCapSurfV1);
-                                        InsertTrimAt(capSurf, ai, &stb);
-                                    } else {
-                                        // B0→A0: replace with NC2(bkwd, B0→V1) + NC1(bkwd, V1→A0)
-                                        capSurf->trim[ai] = STrimBy::EntireCurve(this, hNC2, true);
-                                        capSurf = surface.FindById(hCapSurfV1);
-                                        STrimBy stb = STrimBy::EntireCurve(this, hNC1, true);
-                                        capSurf = surface.FindById(hCapSurfV1);
-                                        InsertTrimAt(capSurf, ai, &stb);
-                                    }
-                                }
-                                if(ai < 0 && forkPattern) {
-                                    // FORKPATTERN with hSurfB0 != hCapSurfV1:
-                                    // Arc was orphaned by BridgeTrimGapIfOpen, leaving
-                                    // a gap at A0↔B0 on hCapSurfV1. Close it by
-                                    // appending NC1(A0→V1) + NC2(V1→B0) as new trims.
-                                    // The assembler builds chains by endpoint matching.
-                                    capSurf = surface.FindById(hCapSurfV1);
-                                    STrimBy nc1Stb = STrimBy::EntireCurve(this, hNC1, false);
-                                    capSurf = surface.FindById(hCapSurfV1);
-                                    capSurf->trim.Add(&nc1Stb);
-                                    capSurf = surface.FindById(hCapSurfV1);
-                                    STrimBy nc2Stb = STrimBy::EntireCurve(this, hNC2, false);
-                                    capSurf = surface.FindById(hCapSurfV1);
-                                    capSurf->trim.Add(&nc2Stb);
                                 }
                             }
 
