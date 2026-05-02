@@ -330,12 +330,6 @@ static int ValidateAllTrimLoops(SShell *shell, const char *context) {
                 }
             }
             if(!matched) {
-                if(nUnmatched == 0) {
-                    dbp("TRIM-DIAG [%s] Surface h=%08x (%d trims): OPEN LOOP",
-                        context, ss.h.v, ss.trim.n);
-                }
-                dbp("  trim[%d].finish=(%.4f,%.4f,%.4f) has no matching start",
-                    i, fin.x, fin.y, fin.z);
                 nUnmatched++;
             }
         }
@@ -351,21 +345,10 @@ static int ValidateAllTrimLoops(SShell *shell, const char *context) {
                 }
             }
             if(!matched) {
-                if(nUnmatched == 0) {
-                    dbp("TRIM-DIAG [%s] Surface h=%08x (%d trims): OPEN LOOP",
-                        context, ss.h.v, ss.trim.n);
-                }
-                dbp("  trim[%d].start=(%.4f,%.4f,%.4f) has no matching finish",
-                    i, st.x, st.y, st.z);
                 nUnmatched++;
             }
         }
         totalGaps += nUnmatched;
-    }
-    if(totalGaps == 0) {
-        dbp("TRIM-DIAG [%s] All surfaces have closed trim loops", context);
-    } else {
-        dbp("TRIM-DIAG [%s] Found %d total unmatched endpoint(s)", context, totalGaps);
     }
     return totalGaps;
 }
@@ -438,12 +421,6 @@ static int RepairOpenTrimLoops(SShell *shell, const char *context) {
             tr.gapStart = unmatchedStart[bestSi];
             repairs.push_back(tr);
 
-            dbp("TRIM-REPAIR [%s] Surface h=%08x: will bridge "
-                "(%.4f,%.4f,%.4f)->(%.4f,%.4f,%.4f) dist=%.6f",
-                context, ss.h.v,
-                fin.x, fin.y, fin.z,
-                unmatchedStart[bestSi].x, unmatchedStart[bestSi].y,
-                unmatchedStart[bestSi].z, bestDist);
         }
     }
 
@@ -459,8 +436,6 @@ static int RepairOpenTrimLoops(SShell *shell, const char *context) {
     }
 
     if(totalRepairs > 0) {
-        dbp("TRIM-REPAIR [%s] Made %d repair(s)", context, totalRepairs);
-        // Re-validate after repairs
         ValidateAllTrimLoops(shell, context);
     }
     return totalRepairs;
@@ -2999,6 +2974,151 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                     // Skip degenerate corners where A0 == B0 (zero-area triangle)
                     if(A0.Equals(B0)) continue;
 
+                    // --- CF Case: Absorb corner into chamfer cap surface ---
+                    // When hCapSurfV1 is a flat plane (prior chamfer's cap),
+                    // don't create a separate corner triangle. Instead, extend
+                    // hCapSurfV1 to cover the corner area. The fillet keeps its
+                    // arc (hArcV1) unchanged — no NC3, no corner surface.
+                    // This matches how OCCT handles 2-stripe corners: the two
+                    // surfaces share a boundary curve, no separate patch.
+                    {
+                        SSurface *capSurfCheck = surface.FindByIdNoOops(hCapSurfV1);
+                        bool isCFcase = capSurfCheck &&
+                                        capSurfCheck->degm == 1 &&
+                                        capSurfCheck->degn == 1 &&
+                                        hCapSurfV1 != hFillet &&
+                                        // Exclude forkPattern combos: when both
+                                        // bridges originate from V1, inserting
+                                        // NC1 into both hSurfA0 and hCapSurfV1
+                                        // with the same backwards flag produces
+                                        // parallel (not anti-parallel) mesh edges
+                                        // → naked edges / leaks.  Let the normal
+                                        // corner triangle code handle those.
+                                        !forkPattern &&
+                                        // Only apply CF case when hCapSurfV1 is
+                                        // one of the bridge target surfaces.  This
+                                        // ensures we are at the actual chamfer-fillet
+                                        // junction (where the chamfer cap IS the
+                                        // fillet endpoint cap) and not at a regular
+                                        // fillet endpoint whose cap is a box face.
+                                        (hCapSurfV1 == hSurfA0 || hCapSurfV1 == hSurfB0);
+                        if(isCFcase) {
+
+                            // NC1 (A0→V1): always needed, shared between hCapSurfV1 and hSurfA0
+                            hSCurve hNC1 = AddLinearCurve(this, A0, cornerV1,
+                                                           hCapSurfV1, hSurfA0);
+
+                            // Replace bridge[bB] in hSurfA0 with NC1
+                            SSurface *ssA0 = surface.FindById(hSurfA0);
+                            for(int ti = 0; ti < ssA0->trim.n; ti++) {
+                                if(ssA0->trim[ti].curve == bridges[bB].h) {
+                                    ssA0->trim[ti] = STrimBy::EntireCurve(this, hNC1, forkPattern);
+                                    break;
+                                }
+                            }
+
+                            if(forkPattern && hSurfB0 == hCapSurfV1) {
+                                // FORKPATTERN FIX: hSurfB0 IS hCapSurfV1, so the
+                                // bridge[bA] (V1→B0) is ON hCapSurfV1 itself.
+                                // Replace bridge[bA] with NC1(bkwd, V1→A0) + hArcV1(A0→B0)
+                                // to extend the cap boundary through A0 via the fillet arc.
+                                // No NC2 needed — V1→B0 was a boundary with the corner
+                                // triangle, which we're absorbing into the cap.
+                                SSurface *capSurf = surface.FindById(hCapSurfV1);
+                                for(int ti = 0; ti < capSurf->trim.n; ti++) {
+                                    if(capSurf->trim[ti].curve == bridges[bA].h) {
+                                        // Determine arc direction: we need A0→B0
+                                        SCurve *arcCurve = curve.FindById(hArcV1);
+                                        Vector arcFirst = arcCurve->pts[0].p;
+                                        bool arcBkwd = !arcFirst.Equals(A0);
+
+                                        // Replace bridge with NC1(backwards=true, V1→A0)
+                                        capSurf->trim[ti] = STrimBy::EntireCurve(this, hNC1, /*backwards=*/true);
+                                        capSurf = surface.FindById(hCapSurfV1);
+
+                                        // Insert hArcV1 right after NC1 (A0→B0)
+                                        STrimBy arcStb = STrimBy::EntireCurve(this, hArcV1, arcBkwd);
+                                        capSurf = surface.FindById(hCapSurfV1);
+                                        InsertTrimAt(capSurf, ti, &arcStb);
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // NON-FORKPATTERN: existing working code.
+                                // Create NC2 and replace arc in hCapSurfV1 with NC1+NC2.
+                                hSCurve hNC2 = AddLinearCurve(this, cornerV1, B0,
+                                                               hCapSurfV1, hSurfB0);
+
+                                // Replace bridge[bA] in hSurfB0 with NC2
+                                SSurface *ssB0 = surface.FindById(hSurfB0);
+                                for(int ti = 0; ti < ssB0->trim.n; ti++) {
+                                    if(ssB0->trim[ti].curve == bridges[bA].h) {
+                                        ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false);
+                                        break;
+                                    }
+                                }
+
+                                // Replace hArcV1 in hCapSurfV1's trim with NC1+NC2.
+                                // The arc connects A0↔B0; replace with A0→V1→B0 path.
+                                SSurface *capSurf = surface.FindById(hCapSurfV1);
+                                int ai = -1;
+                                for(int ti = 0; ti < capSurf->trim.n; ti++) {
+                                    if(capSurf->trim[ti].curve == hArcV1) {
+                                        ai = ti;
+                                        break;
+                                    }
+                                }
+                                // Fallback: search by A0↔B0 endpoints
+                                if(ai < 0) {
+                                    for(int ti = 0; ti < capSurf->trim.n; ti++) {
+                                        Vector ts = capSurf->trim[ti].start;
+                                        Vector tf = capSurf->trim[ti].finish;
+                                        if((ts.Equals(A0) && tf.Equals(B0)) ||
+                                           (ts.Equals(B0) && tf.Equals(A0))) {
+                                            ai = ti;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if(ai >= 0) {
+                                    bool arcStartsAtA0 = capSurf->trim[ai].start.Equals(A0);
+                                    if(arcStartsAtA0) {
+                                        // A0→B0: replace with NC1(A0→V1) + NC2(V1→B0)
+                                        capSurf->trim[ai] = STrimBy::EntireCurve(this, hNC1, false);
+                                        capSurf = surface.FindById(hCapSurfV1);
+                                        STrimBy stb = STrimBy::EntireCurve(this, hNC2, false);
+                                        capSurf = surface.FindById(hCapSurfV1);
+                                        InsertTrimAt(capSurf, ai, &stb);
+                                    } else {
+                                        // B0→A0: replace with NC2(bkwd, B0→V1) + NC1(bkwd, V1→A0)
+                                        capSurf->trim[ai] = STrimBy::EntireCurve(this, hNC2, true);
+                                        capSurf = surface.FindById(hCapSurfV1);
+                                        STrimBy stb = STrimBy::EntireCurve(this, hNC1, true);
+                                        capSurf = surface.FindById(hCapSurfV1);
+                                        InsertTrimAt(capSurf, ai, &stb);
+                                    }
+                                }
+                                if(ai < 0 && forkPattern) {
+                                    // FORKPATTERN with hSurfB0 != hCapSurfV1:
+                                    // Arc was orphaned by BridgeTrimGapIfOpen, leaving
+                                    // a gap at A0↔B0 on hCapSurfV1. Close it by
+                                    // appending NC1(A0→V1) + NC2(V1→B0) as new trims.
+                                    // The assembler builds chains by endpoint matching.
+                                    capSurf = surface.FindById(hCapSurfV1);
+                                    STrimBy nc1Stb = STrimBy::EntireCurve(this, hNC1, false);
+                                    capSurf = surface.FindById(hCapSurfV1);
+                                    capSurf->trim.Add(&nc1Stb);
+                                    capSurf = surface.FindById(hCapSurfV1);
+                                    STrimBy nc2Stb = STrimBy::EntireCurve(this, hNC2, false);
+                                    capSurf = surface.FindById(hCapSurfV1);
+                                    capSurf->trim.Add(&nc2Stb);
+                                }
+                            }
+
+                            cornerCreated = true;
+                            continue;  // Skip the normal corner triangle code below
+                        }
+                    }
 
                     // Create flat corner triangle surface FromPlane(V1, A0-V1, B0-V1).
                     // UV: V1=(0,0), A0=(0,1), B0=(1,0). Correct CCW winding: V1→B0→A0→V1.
@@ -3014,7 +3134,11 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                             cornerV1,
                             A0.Minus(cornerV1),  // u direction: V1→A0
                             B0.Minus(cornerV1)); // v direction: V1→B0
-                    cornerSurf.color = surface.FindById(hFillet)->color;
+                    // Use the cap surface color so the corner triangle blends
+                    // visually with hCapSurfV1 (both are coplanar flat surfaces).
+                    // In CC, the corner blends with hChamfer; in CF, it should
+                    // blend with the chamfer cap, not the curved fillet cylinder.
+                    cornerSurf.color = surface.FindById(hCapSurfV1)->color;
                     cornerSurf.face = faceH.v;
                     // Option B (iter-25 item-17): tag fillet-style fillet-corner surfaces.
                     // Symmetric to the MakeFromChamferOf corner-tag (iter-24 item-15).
@@ -3066,46 +3190,99 @@ void SShell::MakeFromFilletOf(SShell *src, Group *g, double r) {
                             ssB0->trim[ti] = STrimBy::EntireCurve(this, hNC2, false);
                             replacedBridgeBA = true;
                             break;
-                        }
+                    }
                     }
 
-                    // Create NC3 (A0→B0): shared between hCorner and hFillet.
-                    hSCurve hNC3 = AddLinearCurve(this, A0, B0, hCorner, hFillet);
+                    // Check if the fillet arc at V1 is curved (deg >= 2).
+                    // If so, use a COPY of the arc instead of a straight NC3
+                    // as the hCorner↔hFillet boundary.  This keeps the fillet's
+                    // endcap curved (not replaced by straight NC3) and makes
+                    // the corner surface fail the "corner triangle signature"
+                    // test (because the arc copy has deg >= 2, not linear).
+                    // For CC corners, the arc is deg <= 1 → falls through to
+                    // the original NC3 code path.
+                    bool usedArcForCorner = false;
+                    {
+                        SSurface *hFilletSurf = surface.FindById(hFillet);
+                        for(int ai = 0; ai < hFilletSurf->trim.n; ai++) {
+                            if(hFilletSurf->trim[ai].curve != hArcV1 &&
+                               hFilletSurf->trim[ai].curve != hArcV2) continue;
+                            SCurve *ac = curve.FindByIdNoOops(hFilletSurf->trim[ai].curve);
+                            if(!ac || !ac->isExact || ac->exact.deg < 2) continue;
+                            if(!ac->pts.n || ac->pts.n < 2) continue;
+                            if(!ac->pts[0].p.Equals(A0) && !ac->pts[ac->pts.n-1].p.Equals(A0)) continue;
 
-                    // Replace arc hArcV1 in hFillet's trim with NC3.
-                    SSurface *hFilletSurf = surface.FindById(hFillet);
-                    for(int ai = 0; ai < hFilletSurf->trim.n; ai++) {
-                        // Only match arc edges (hArcV1/hArcV2), never side edges
-                        if(hFilletSurf->trim[ai].curve != hArcV1 &&
-                           hFilletSurf->trim[ai].curve != hArcV2) continue;
-                        SCurve *ac = curve.FindByIdNoOops(hFilletSurf->trim[ai].curve);
-                        if(!ac || ac->pts.n < 2) continue;
-                        if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
-                            // Account for trim's backwards flag when computing NC3 direction
-                            bool trimBkwd = hFilletSurf->trim[ai].backwards;
-                            int npts = ac->pts.n;
-                            Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
-                            bool nc3Backwards = !effectiveStart.Equals(A0);
-                            hFilletSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
+                            // Found the curved fillet arc at V1.
+                            // Create a copy with surfA=hCorner, surfB=hFillet.
+                            SCurve arcCopy = {};
+                            arcCopy.isExact = ac->isExact;
+                            arcCopy.exact = ac->exact;
+                            ac->exact.MakePwlInto(&arcCopy.pts);
+                            arcCopy.surfA = hCorner;
+                            arcCopy.surfB = hFillet;
+                            hSCurve hArcCopy = curve.AddAndAssignId(&arcCopy);
+
+                            // DON'T replace the fillet's arc — keep it as-is.
+                            // The arc copy will be the hCorner↔hFillet boundary.
+
+                            // Determine arc direction for hCorner's trim:
+                            // hCorner winding: NC2(V1→B0) → arc(B0→A0) → NC1(A0→V1)
+                            // Need effective direction B0→A0 on the arc copy.
+                            SCurve *acCopy = curve.FindById(hArcCopy);
+                            bool arcFwdIsA0toB0 = acCopy->pts[0].p.Equals(A0);
+                            bool arcBkwdForCorner = arcFwdIsA0toB0; // true → B0→A0
+
+                            // Build cornerSurf's trim:
+                            SSurface *hCornerSurf = surface.FindById(hCorner);
+                            STrimBy stb;
+                            stb = STrimBy::EntireCurve(this, hNC2, false); // V1→B0
+                            hCornerSurf->trim.Add(&stb);
+                            hCornerSurf = surface.FindById(hCorner);
+                            stb = STrimBy::EntireCurve(this, hArcCopy, arcBkwdForCorner); // B0→A0
+                            hCornerSurf->trim.Add(&stb);
+                            hCornerSurf = surface.FindById(hCorner);
+                            stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
+                            hCornerSurf->trim.Add(&stb);
+                            usedArcForCorner = true;
+                            cornerCreated = true;
                             break;
                         }
                     }
 
-                    // Build cornerSurf's trim (CCW winding in UV: V1→B0→A0→V1):
-                    //   NC2 fwd  (V1→B0): in UV goes (0,0)→(1,0)
-                    //   NC3 bwd  (B0→A0): in UV goes (1,0)→(0,1)  [diagonal]
-                    //   NC1 fwd  (A0→V1): in UV goes (0,1)→(0,0)
-                    SSurface *hCornerSurf = surface.FindById(hCorner);
-                    STrimBy  stb;
-                    stb = STrimBy::EntireCurve(this, hNC2, false); // V1→B0
-                    hCornerSurf->trim.Add(&stb);
-                    hCornerSurf = surface.FindById(hCorner);
-                    stb = STrimBy::EntireCurve(this, hNC3, true);  // B0→A0 (NC3 reversed)
-                    hCornerSurf->trim.Add(&stb);
-                    hCornerSurf = surface.FindById(hCorner);
-                    stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
-                    hCornerSurf->trim.Add(&stb);
-                    cornerCreated = true;
+                    if(!usedArcForCorner) {
+                        // Fallback: straight NC3 for CC corners or when arc not found.
+                        hSCurve hNC3 = AddLinearCurve(this, A0, B0, hCorner, hFillet);
+
+                        // Replace arc hArcV1 in hFillet's trim with NC3.
+                        SSurface *hFilletSurf = surface.FindById(hFillet);
+                        for(int ai = 0; ai < hFilletSurf->trim.n; ai++) {
+                            if(hFilletSurf->trim[ai].curve != hArcV1 &&
+                               hFilletSurf->trim[ai].curve != hArcV2) continue;
+                            SCurve *ac = curve.FindByIdNoOops(hFilletSurf->trim[ai].curve);
+                            if(!ac || ac->pts.n < 2) continue;
+                            if(ac->pts[0].p.Equals(A0) || ac->pts[ac->pts.n-1].p.Equals(A0)) {
+                                bool trimBkwd = hFilletSurf->trim[ai].backwards;
+                                int npts = ac->pts.n;
+                                Vector effectiveStart = trimBkwd ? ac->pts[npts-1].p : ac->pts[0].p;
+                                bool nc3Backwards = !effectiveStart.Equals(A0);
+                                hFilletSurf->trim[ai] = STrimBy::EntireCurve(this, hNC3, nc3Backwards);
+                                break;
+                            }
+                        }
+
+                        // Build cornerSurf's trim (CCW winding in UV: V1→B0→A0→V1):
+                        SSurface *hCornerSurf = surface.FindById(hCorner);
+                        STrimBy stb;
+                        stb = STrimBy::EntireCurve(this, hNC2, false); // V1→B0
+                        hCornerSurf->trim.Add(&stb);
+                        hCornerSurf = surface.FindById(hCorner);
+                        stb = STrimBy::EntireCurve(this, hNC3, true);  // B0→A0
+                        hCornerSurf->trim.Add(&stb);
+                        hCornerSurf = surface.FindById(hCorner);
+                        stb = STrimBy::EntireCurve(this, hNC1, false); // A0→V1
+                        hCornerSurf->trim.Add(&stb);
+                        cornerCreated = true;
+                    }
                 }
             }
 

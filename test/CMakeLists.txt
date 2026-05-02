@@ -79,6 +79,7 @@ set(testsuite_SOURCES
     group/chamfer/test_geom_verify.cpp
     group/chamfer/test_tripleop.cpp
     group/chamfer/test_vertex_limit.cpp
+    group/chamfer/test_endcap.cpp
 )
 
 add_executable(solvespace-testsuite
